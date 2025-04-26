@@ -132,7 +132,6 @@ typedef struct {                     // Words:
             case 'v': {
                 char *end;
                 unsigned long tmp = strtoul(optarg, &end, 0);
-                if (*end || tmp > 3) usage(argv[0]);
                 verbosity = (uint32_t)tmp;
                 break;
             }
@@ -224,7 +223,7 @@ typedef struct {                     // Words:
     
                 if (verbosity >= 4) {
     
-                    for (uint8_t i = 1; i < WORDS_PER_PAYLOAD; ++i) {
+                    for (uint8_t i = 0; i < WORDS_PER_PAYLOAD; ++i) {
                         printf("---Word [%2u]: %08x\n", i,  rx_packet_buffer[pkt].payload.data[i]);
                     }                
     
