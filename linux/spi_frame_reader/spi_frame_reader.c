@@ -32,11 +32,27 @@
  
  // Note that `word` = 32 bits
 
- #define WORDS_PER_PAYLOAD 24           // Must match the number of words defined in the FPGA's payload
+ #define WORDS_PER_PAYLOAD 23           // Must match the number of words defined in the FPGA's payload. Probably slightly more effcicient for this to be odd so total packet size is 64 bit alighned?
 
  #define DEFAULT_DEV_PATH       "/dev/spidev1.0"
  #define DEFAULT_SPEED_HZ       40000000            /* 40 MHz  */
  #define DEFAULT_PACKET_COUNT   1                   /* 0 = forever */
+
+ #define MAX_SPI_DEV_IOCTL_XFER 4096          /* current /sys/module/spidev/parameters/bufsiz */
+
+ /* 
+
+|**Pass a kernel-cmdline option (or rebuild)**
+ spidev is built-in (`CONFIG_SPI_SPIDEV=y`)
+ Add `spidev.bufsiz=65536` to the kernel command line (e.g. in U-Boot: `setenv bootargs $bootargs spidev.bufsiz=65536; saveenv`)
+ or change the `bufsiz` line in `spidev.c` and recompile the kernel. 
+
+ **Tip:** keep the new size a power of two (16 k, 32 k, 64 k) and under whatever limit your SPI controller driver reports via `spi_max_transfer_size()`.
+
+ */
+
+
+ #define min(a,b) ((a) < (b) ? (a) : (b))   /* biggger is more efficient because hopefully DMA kicks in and less send transactions */
 
  #define BYTES_PER_WORD     4            /* Define our terms. */
  
@@ -69,7 +85,7 @@ typedef struct {                     // Words:
          "  -d  SPI device node     (default %s)\n"
          "  -s  SPI clock speed Hz  (default %u)\n"
          "  -c  Packets to receive  (default %u)\n"
-         "  -v  Verbosity. 0=Total run, 1=Report errors, 2=Each packet, 3=Raw data (default 1)\n"
+         "  -v  Verbosity. 0=Total run, 1=Report errors, 2=Each busrt 3=Each packet, 4=Raw data (default 1)\n"
          "\nVerbosity>1 will reduce max bandwith.\n",
          DEFAULT_DEV_PATH, DEFAULT_SPEED_HZ, DEFAULT_PACKET_COUNT);
      exit(EXIT_FAILURE);
@@ -139,61 +155,102 @@ typedef struct {                     // Words:
      uint8_t mode = SPI_MODE_1 | CS_POLARITY; 
      uint8_t bits = 32;  // This is the highest the current driver will let us go. The ECSPI hardware can go higher. 
  
-     printf("Device %s @ %u Hz  | Words per payload %u | Packet Len %lu bytes | Receving %u packets\n",
-            dev_path, speed, WORDS_PER_PAYLOAD , BYTES_PER_PACKET , packet_count );
+     printf("Device %s @ %u Hz  | Words per payload: %u | Receving %u packets | Payload bytes: %lu | Packet bytes: %lu \n",
+            dev_path, speed, WORDS_PER_PAYLOAD , packet_count ,  sizeof(payload_t), sizeof(packet_t) );
  
      /* --- configure spidev ------------------------------------------- */
      if (ioctl(fd, SPI_IOC_WR_MODE, &mode)            == -1) die("SPI_IOC_WR_MODE");
      if (ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits)   == -1) die("SPI_IOC_WR_BITS");        
      if (ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed)   == -1) die("SPI_IOC_WR_SPEED");
  
-     uint8_t *tx = calloc(BYTES_PER_PACKET, 1);           /* This is just for the SPI to have something to send (to nowhere) */
+
+     // Calculate how big a burst should be. (At least 1 packet, at most 1000 packets)
+     // Burst must fit into the kernel buffer size (MAX_SPI_DEV_IOCTL_XFER)
+
+     uint32_t packet_burst_count = min( packet_count,  (MAX_SPI_DEV_IOCTL_XFER / BYTES_PER_PACKET));   // How many full packets can fit into the kernel buffer?
+
+     uint8_t *tx = calloc(packet_burst_count, sizeof(packet_t));           /* This is just for the SPI to have something to send (to nowhere) */
      if (!tx) die("malloc");
 
-     packet_t rx_packet_buffer;         // Receive buffer for the SPI data. Into the struct so we can effciently pull data out.
+     packet_t rx_packet_buffer[packet_burst_count];         // Receive buffer for the SPI data. Into the struct so we can effciently pull data out.
+
  
      struct spi_ioc_transfer tr = {
-         .tx_buf        = (unsigned long)tx,                  // Not needed?
-         .rx_buf        = (unsigned long)&rx_packet_buffer,   // This is where the data will be read into
-         .len           = BYTES_PER_PACKET,
-         .speed_hz      = speed,
-         .bits_per_word = bits,
-         .cs_change     = 0,   /* Keep CS asserted the whole time (Do not assert/dessert with each write)*/
-         .delay_usecs   = 0
-     };
+        .tx_buf        = (unsigned long)tx,                  // Not needed?
+        .rx_buf        = (unsigned long)&rx_packet_buffer,   // This is where the data will be read into
+        //.len           = BYTES_PER_PACKET*packet_burst_count,
+        .speed_hz      = speed,
+        .bits_per_word = bits,
+        .cs_change     = 0,   /* Keep CS asserted the whole time (Do not assert/dessert with each write)*/ // NOTE: THIS DOES NOT SEEM TO WORK 
+        .delay_usecs   = 0
+    };
+
  
-     uint32_t packet_good   = 0;          // How many packets have we received without errors
      uint32_t packet_errors = 0;          // How many packets have we received that are corrupted?
+
+     uint32_t packets_left = packet_count;           // How many packets are left to read?
+     
+     uint32_t next_seq = 0;           // 0= sync to next recieved packet  
+
+     printf("Starting packet loop |  Burst count: %u | Max kerel XFER buffer size: %u\n" ,
+             packet_burst_count , MAX_SPI_DEV_IOCTL_XFER);  
 
     struct timespec start_time, end_time;
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);      
+    clock_gettime(CLOCK_MONOTONIC, &start_time);     
 
-    for (uint32_t pkt = 0; packet_count == 0 || pkt < packet_count ; ++pkt) {           // 0=forever
+
+    while ( packets_left > 0) {   
+        
+        if (verbosity >= 2) {    
+            printf("-Burst: Packets left: %u | Next seq: %u\n", packets_left, next_seq);
+        }
+
+        uint32_t packets_in_this_burst = min( packet_burst_count, packets_left);   // How many packets should we read in this burst?
+
+        tr.len = packets_in_this_burst*sizeof(packet_t);   // How many bytes should we read in this burst?
 
         /* --- single SPI transaction = one full packet -------------------- */
         if (ioctl(fd, SPI_IOC_MESSAGE(1), &tr) < 1) die("SPI_IOC_MESSAGE");
 
+        // Process the packets in this burst
 
-        packet_good++;
+        for( uint32_t pkt = 0; pkt < packets_in_this_burst ; ++pkt) {           
 
-
-        if (verbosity > 1) {
-            printf(" Packet %9u | SEQ:%9u\n",
-                    pkt , rx_packet_buffer.seq
-            );
-
-
-            if (verbosity > 2) {
-
-                for (uint8_t i = 1; i < WORDS_PER_PAYLOAD; ++i) {
-                    printf("    Word [%2u]: %08x\n", i,  rx_packet_buffer.payload.data[i]);
-                }                
-
+            if (verbosity >= 3 ) {
+                printf("--Packet %9u | SEQ:%9u\n",
+                        pkt , rx_packet_buffer[pkt].seq
+                );
+    
+                if (verbosity >= 4) {
+    
+                    for (uint8_t i = 1; i < WORDS_PER_PAYLOAD; ++i) {
+                        printf("---Word [%2u]: %08x\n", i,  rx_packet_buffer[pkt].payload.data[i]);
+                    }                
+    
+                }
+    
             }
 
-        }
+            // Check packet for errors
+    
+            if (rx_packet_buffer[pkt].seq != next_seq) {           // If the packet is not the next expected packet
+                if (next_seq != 0) {                                // If this is the first packet then not an error
 
+                    if (verbosity > 0) {                        
+                        printf("ERROR: SEQ expected:%u Recieved:%u\n", next_seq, rx_packet_buffer[pkt].seq);
+                    }
+                    packet_errors++;
+                }
+                next_seq = rx_packet_buffer[pkt].seq;       // Resync to the current packet
+            } 
+
+            next_seq++;           // Increment the expected packet number        
+
+        }
+        
+
+        packets_left -= packets_in_this_burst;           // How many packets are left to read?
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end_time);
@@ -207,8 +264,8 @@ typedef struct {                     // Words:
     unsigned long elapsed_time_us;
     elapsed_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + ((end_time.tv_nsec - start_time.tv_nsec) / 1000);
 
-    printf("Total time: %lu us | %u good packets | %.03f us/packet\n",
-            elapsed_time_us, packet_good,  (elapsed_time_us / (packet_good *1.0) ) );
+    printf("Total time: %lu us | %u packets packets | %.03f us/packet\n",
+            elapsed_time_us, packet_count,  (elapsed_time_us / (packet_count *1.0) ) );
     
     free(tx); close(fd);
     return 0;
