@@ -38,11 +38,11 @@ Note that the tool and the hardware can go up to 50Mz, but above ~39.9Mhz  you w
 
 LMK what you find or if any questions come up!
 
-## Protocol info
+# Protocol info
 
 Test protocol here, in case you care.
 
-### SPI Mode
+## SPI Mode
 
 We use SPI mode 0x01 on both the FPGA and the ECSPI:
 ```
@@ -56,17 +56,14 @@ The CS is active low, which matches the settings you already had in the `fix-voy
 point we might want to switch to CS low so it can be open drain so the FPGA can pause the ECSPI (would require 
 driver modifications). 
 
-### Packet format
+## Packet format
 
 Each packet has a quadlet sequence number followed by 23 quadlets of test data. The sequence number is there so
 the receiver can detect dropped packets. The test data is just a fixed set of mixed numbers that both sides know and so can receiver can check for corruption in transit. 
 
-### Theoretical bandwidth calculations
+# Theoretical bandwidth calculations
 
 Constraint is we need to push a packet every 16.384us. 
-
-It is possible we might actually have more time if we no not send packets during the "margin" at the sides of 
-the frame when the mirror is changing direction. 
 
 Assuming the SPI clock runs continuously...
 
@@ -74,9 +71,12 @@ At 40Mhz, a 22 word packet takes (1 / (40 Mhz)) * 32 * 20 = 16 microseconds on t
 
 At 50Mhz, a 26 word packet takes ((1 / (50 Mhz)) * 32 * 26 = 16.64 microseconds on the wire
 
-### Optimizations
+If we no not send packets during the "margin" at the sides of the frame when the mirror is changing direction,
+then we can take more time to drain each "field" from the FIFO so data rate can be lower or packets can be longer.
 
-#### Expand XFER BUF in kernal
+# Optimizations
+
+## Expand XFER BUF in kernal
 
 With stock kernal, we get a gap every 4096 bits...
 ![](image-7.png)
@@ -88,7 +88,7 @@ And about ~100-200us at 40Mhz
 To fix this, we need to increase the size of the XFER buffer in `spidev`. I think this could be a setting to the kernel?
 https://community.toradex.com/t/maximum-transfer-size-4096-bytes-with-spidev-driver-for-spi-on-colibri-imx6/7637/2
 
-#### Remove gap between 32 bit words
+## Remove gap between 32 bit words
 
 Right now there is a ~1us gap between 32 bit words at 40Mhz...
 ![](image-6.png)
@@ -96,15 +96,15 @@ Figure out where that is from? A good test would be to brute force keep the FIFO
 
 It increases as CLK rate goes down, so probably happening inside the ECSPI. Maybe increase the burst_size register inside the ECSPI would fix this? The driver currently seams to max at 32 bits. 
 
-#### Remove gap between CS and posedge of CLK
+## Remove gap between CS and posedge of CLK
 
 This is probably happening in the driver so we could probably fix it, but it is only ~50us (clk speed invariant) and we only incur it once per CS. 
 
-#### Figure out why things go wonky at 40Mhz
+## Figure out why things go wonky at 40Mhz
 
 Maybe some kind of clock interaction? Need to dig in with a kernel module and a fast logic analyzer and track this down. 
 
-#### Remove gap between bytes at 50Mhz
+## Remove gap between bytes at 50Mhz
 
 ![](image-9.png)
 If we could fix this, then we'd get instant 25% boost. 
@@ -113,7 +113,7 @@ Hard to guess where to is coming from? Maybe the driver or DMA can't keep up... 
 
 And ooof, seams like once you cross the 50MHz line, then you keep the 8-bit gaps even after you drop back down to 40Mhz. AND IF YOU REBOOT THEN THE SPIDEV IS DEAD! NEED TO POWER CYCLE TO GET 40MHZ BACK. :/
 
-## Testing with TE0703 FPGA and Dhalia CPU carrier boards
+# Testing with TE0703 FPGA and Dhalia CPU carrier boards
 
 This is the setup on my bench. It should be using the same pins as the Voyant PCB based on the schematics I have. 
 
