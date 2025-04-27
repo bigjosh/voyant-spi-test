@@ -79,6 +79,28 @@ typedef struct {                     // Words:
 
  static_assert( BITS_PER_PACKET <= (32*36) , "packet_t must be less than 32*36 bits to fit into the ECSPI hardware buffer.");
 
+// These are from the FPGA code. They are used to test the data integrity of the packets.
+
+ static const uint32_t test_payload[] = {
+    0xABCDEF00,  /* [0] */
+    0x98765432,  /* [1] */
+    0x24682468,  /* [2] */
+    0x55555555,  /* [3] */
+    0xAAAAAAAA,  /* [4] */
+    0xFFFFFFFF,  /* [5] */
+    0x00000000,  /* [6] */
+    0x00000001,  /* [7] */
+    0x00000000,  /* [8] */
+    0xFFFFFFFF,  /* [9] */
+    0xFFFFFFFE,  /* [10] */
+    0xFFFFFFFF,  /* [11] */
+    0x1234ABCD   /* [12] */
+    /* 0xDEADBEEF, …  <- add more if you want “default” padding words */
+};
+
+#define TEST_PAYLOAD_SIZE (sizeof(test_payload) / sizeof(test_payload[0]))
+
+
  static void usage(const char *prog)
  {
      fprintf(stderr,
@@ -185,11 +207,15 @@ typedef struct {                     // Words:
     };
 
  
-     uint32_t packet_errors = 0;          // How many packets have we received that are corrupted?
+     uint32_t seq_errors = 0;
+     uint32_t seq_reset = 0;         // The ECSPI started a new transaction on us. 
+     uint32_t corrupt_errors = 0;          // How many packets have we received that are corrupted?
 
      uint32_t packets_left = packet_count;           // How many packets are left to read?
      
-     uint32_t next_seq = 0;           // 0= sync to next recieved packet  
+     uint32_t next_seq = 1;           //We reset the FPGA on every run, so we start at 1.
+
+     uint32_t packets_read = 0;           // How many packets have we read so far?
 
      printf("Starting packet loop |  Burst count: %u | Max kerel XFER buffer size: %u\n" ,
              packet_burst_count , MAX_SPI_DEV_IOCTL_XFER);  
@@ -216,9 +242,11 @@ typedef struct {                     // Words:
 
         for( uint32_t pkt = 0; pkt < packets_in_this_burst ; ++pkt) {           
 
+            packets_read++;           // Increment the number of packets read so far. 
+
             if (verbosity >= 3 ) {
-                printf("--Packet %9u | SEQ:%9u\n",
-                        pkt , rx_packet_buffer[pkt].seq
+                printf("--Packet #%9u | SEQ:%9u\n",
+                        packets_read , rx_packet_buffer[pkt].seq
                 );
     
                 if (verbosity >= 4) {
@@ -232,19 +260,33 @@ typedef struct {                     // Words:
             }
 
             // Check packet for errors
-    
-            if (rx_packet_buffer[pkt].seq != next_seq) {           // If the packet is not the next expected packet
-                if (next_seq != 0) {                                // If this is the first packet then not an error
 
+            uint32_t recieved_seq = rx_packet_buffer[pkt].seq;
+    
+            if (recieved_seq != next_seq) {           // If the packet is not the next expected packet
+
+                if (recieved_seq == 1) {           
+                    // If the seq is 1 then the ECSPI has reset CS and started a new transaction on us.
+                    if (verbosity > 1) {
+                        printf("ERROR: SEQ reset! Recieved:%u\n", recieved_seq);
+                    }
+                    seq_reset++;
+                } else {
+
+                    // nope this was a reall seq error
                     if (verbosity > 0) {                        
                         printf("ERROR: SEQ expected:%u Recieved:%u\n", next_seq, rx_packet_buffer[pkt].seq);
                     }
-                    packet_errors++;
+                    seq_errors++;
                 }
-                next_seq = rx_packet_buffer[pkt].seq;       // Resync to the current packet
+
+                
+                next_seq = recieved_seq;       // sync to the current packet
             } 
 
             next_seq++;           // Increment the expected packet number        
+
+            // TODO: Test if the packet is corrupted
 
         }
         
@@ -254,19 +296,31 @@ typedef struct {                     // Words:
 
     clock_gettime(CLOCK_MONOTONIC, &end_time);
 
-    if (packet_errors>0) {
-        printf("ERRORS: %u corrupted packets!\n", packet_errors);
+    if (seq_errors>0) {
+        printf("ERRORS: %u bad seq packets!\n", seq_errors);
     } else {
-        printf("No errors\n");
+        printf("No missed sequences\n");
+    }
+
+
+    if (corrupt_errors>0) {
+        printf("ERRORS: %u corrupted packets!\n", corrupt_errors);
+    } else {
+        printf("No corrupt packets\n");
+    }
+
+    if (seq_reset>0) {
+        printf("ERRORS: %u SEQ resets!\n", seq_reset);
+    } else {
+        printf("No SEQ resets\n");
     }
 
     unsigned long elapsed_time_us;
     elapsed_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + ((end_time.tv_nsec - start_time.tv_nsec) / 1000);
 
-    printf("Total time: %lu us | %u packets packets | %.03f us/packet\n",
-            elapsed_time_us, packet_count,  (elapsed_time_us / (packet_count *1.0) ) );
+    printf("Total time %lu us || %u  packets | %.03f us/packet\n",
+            elapsed_time_us,   packet_count,  (elapsed_time_us / (packet_count *1.0) ) );
     
     free(tx); close(fd);
     return 0;
 }
- 
