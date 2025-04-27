@@ -79,26 +79,79 @@ typedef struct {                     // Words:
 
  static_assert( BITS_PER_PACKET <= (32*36) , "packet_t must be less than 32*36 bits to fit into the ECSPI hardware buffer.");
 
-// These are from the FPGA code. They are used to test the data integrity of the packets.
+/*
+    // This is the data type used in the FPGA design, here for reference.
 
- static const uint32_t test_payload[] = {
-    0xABCDEF00,  /* [0] */
-    0x98765432,  /* [1] */
-    0x24682468,  /* [2] */
-    0x55555555,  /* [3] */
-    0xAAAAAAAA,  /* [4] */
-    0xFFFFFFFF,  /* [5] */
-    0x00000000,  /* [6] */
-    0x00000001,  /* [7] */
-    0x00000000,  /* [8] */
-    0xFFFFFFFF,  /* [9] */
-    0xFFFFFFFE,  /* [10] */
-    0xFFFFFFFF,  /* [11] */
-    0x1234ABCD   /* [12] */
-    /* 0xDEADBEEF, …  <- add more if you want “default” padding words */
+    typedef logic [BITS_PER_WORD-1:0] u32_t;          // 4-state, unsigned
+
+    // A payload is the useful data in a packet, does not include the CRC that will be appened before transmision.
+    // Note that the major index starts at 0, so index 0 will be MSB and go out the wire first.
+    typedef logic [0:WORDS_PER_PAYLOAD-1][BITS_PER_WORD-1:0] payload_t;
+    
+    // Easy to eyeball stuff. 
+    payload_t test_payload = '{
+
+        0       : 32'h5555_5555,      // override element 
+        1       : 32'hAAAA_AAAA,      // override element                 
+        2       : 32'hFFFF_FFFF,      // override element
+        3       : 32'h0000_0000,       // override element
+        4       : 32'h0000_0001,      // override element
+        5       : 32'h0000_0000,       // override element                
+        6       : 32'hFFFF_FFFF,       // override element
+        7       : 32'hFFFF_FFFE,      // override element
+        8       : 32'hFFFF_FFFF,       // override element        
+        9       : 32'hABCD_EF00,      // override element 
+       10       : 32'h9876_5432,      // override element 
+       11       : 32'h2468_2468,       // override element 
+       12       : 32'hFFFF_FFFF,      // override element
+       13       : 32'h0000_0000,       // override element
+       14       : 32'h0000_0001,      // override element
+       15       : 32'h0000_0000,       // override element                
+       16       : 32'hFFFF_FFFF,       // override element
+       17       : 32'hFFFF_FFFE,      // override element
+       18       : 32'hFFFF_FFFF,       // override element                
+       19       : 32'h1234_ABCD,      // override element
+           
+        default : 32'hDEAD_BEEF       // fill any trailing words with dead_beef                   
+                        
+    };       
+
+*/
+
+// Here is the C translation of the above payload.
+
+/* 0xDEADBEEF is the “padding” word used by the FPGA design. */
+#define PADWORD 0xDEADBEEF
+
+/* WORDS_PER_PAYLOAD is already a compile-time constant (23 in your RTL). */
+static const uint32_t test_payload[WORDS_PER_PAYLOAD] = {
+    /* 1.  Fill the whole array with PADWORD ............................... */
+    [0 ... WORDS_PER_PAYLOAD - 1] = PADWORD,
+
+    /* 2.  Override the meaningful entries ................................ */
+
+    [ 0] = 0x55555555,
+    [ 1] = 0xAAAAAAAA,
+    [ 2] = 0xFFFFFFFF,
+    [ 3] = 0x00000000,
+    [ 4] = 0x00000001,
+    [ 5] = 0x00000000,
+    [ 6] = 0xFFFFFFFF,
+    [ 7] = 0xFFFFFFFE,
+    [ 8] = 0xFFFFFFFF,
+    [ 9] = 0xABCDEF00,
+    [10] = 0x98765432,
+    [11] = 0x24682468,
+    [12] = 0xFFFFFFFF,
+    [13] = 0x00000000,
+    [14] = 0x00000001,
+    [15] = 0x00000000,
+    [16] = 0xFFFFFFFF,
+    [17] = 0xFFFFFFFE,
+    [18] = 0xFFFFFFFF,
+    [19] = 0x1234ABCD,
+    /* the rest (13 … 22) stay 0xDEADBEEF */
 };
-
-#define TEST_PAYLOAD_SIZE (sizeof(test_payload) / sizeof(test_payload[0]))
 
 
  static void usage(const char *prog)
@@ -107,6 +160,7 @@ typedef struct {                     // Words:
          "  -d  SPI device node     (default %s)\n"
          "  -s  SPI clock speed Hz  (default %u)\n"
          "  -c  Packets to receive  (default %u)\n"
+         "  -h  Halt on error, print offending packet\n"
          "  -v  Verbosity. 0=Total run, 1=Report errors, 2=Each busrt 3=Each packet, 4=Raw data (default 1)\n"
          "\nVerbosity>1 will reduce max bandwith.\n",
          DEFAULT_DEV_PATH, DEFAULT_SPEED_HZ, DEFAULT_PACKET_COUNT);
@@ -116,6 +170,19 @@ typedef struct {                     // Words:
  uint32_t packet_count = DEFAULT_PACKET_COUNT;           // How many packets should we pull in before exiting?
 
  uint32_t verbosity = 1;                                 // How much should we print out? Default to show print errors while test in progress.
+
+ uint32_t halt_flag =0; 
+
+ void print_packet(packet_t *pkt ) {
+    printf("    RX       Expected\n");
+    printf("    =======  ========\n");
+    printf(" SQ-%08X xxxxxxxx\n", pkt->seq );
+
+    for (int i = 0; i < WORDS_PER_PAYLOAD; i++) {
+        printf(" %2.2u-%08X %08X\n", i , pkt->payload.data[i] , test_payload[i]);
+    }
+    printf("\n");
+}
  
  int main(int argc, char *argv[])
  {
@@ -148,6 +215,11 @@ typedef struct {                     // Words:
                 unsigned long tmp = strtoul(optarg, &end, 0);
                 if (*end || tmp == 0) usage(argv[0]);
                 packet_count = (uint32_t)tmp;
+                break;
+            }
+
+            case 'h': {
+                halt_flag = 1;
                 break;
             }
 
@@ -250,10 +322,7 @@ typedef struct {                     // Words:
                 );
     
                 if (verbosity >= 4) {
-    
-                    for (uint8_t i = 0; i < WORDS_PER_PAYLOAD; ++i) {
-                        printf("---Word [%2u]: %08x\n", i,  rx_packet_buffer[pkt].payload.data[i]);
-                    }                
+                    print_packet(&rx_packet_buffer[pkt] );
     
                 }
     
@@ -277,6 +346,14 @@ typedef struct {                     // Words:
                     if (verbosity > 0) {                        
                         printf("ERROR: SEQ expected:%u Recieved:%u\n", next_seq, rx_packet_buffer[pkt].seq);
                     }
+
+                    if (halt_flag) {
+                        printf("Halting on SEQ error\n");
+                        print_packet(&rx_packet_buffer[pkt]);
+                        free(tx); close(fd);
+                        exit(EXIT_FAILURE);
+                    }
+                    
                     seq_errors++;
                 }
 
@@ -286,7 +363,21 @@ typedef struct {                     // Words:
 
             next_seq++;           // Increment the expected packet number        
 
-            // TODO: Test if the packet is corrupted
+            // TODO: Test the DEADBEEF words too    
+
+            if (memcmp(&rx_packet_buffer[pkt].payload, test_payload, sizeof(test_payload)) != 0) {           // If the packet is not the expected packet
+                if (verbosity > 1) {
+                    printf("ERROR: Packet #%ucorrupted! Recieved:%u\n", packets_read , recieved_seq);
+                }
+
+                if (halt_flag) {
+                    printf("Halting on DATA error\n");
+                    print_packet(&rx_packet_buffer[pkt]);                    
+                    free(tx); close(fd);
+                    exit(EXIT_FAILURE);
+                }
+                corrupt_errors++;
+            }
 
         }
         
@@ -310,7 +401,7 @@ typedef struct {                     // Words:
     }
 
     if (seq_reset>0) {
-        printf("ERRORS: %u SEQ resets!\n", seq_reset);
+        printf("WARN: %u SEQ resets!\n", seq_reset);
     } else {
         printf("No SEQ resets\n");
     }
