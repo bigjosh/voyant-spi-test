@@ -245,7 +245,7 @@ static const uint32_t test_payload[WORDS_PER_PAYLOAD] = {
      // In SPI mode 1, clock is idle low and data sampled on the falling edge.
      // This lets the FPGA shift out data the rising clock edge
  
-     uint8_t mode = SPI_MODE_1 | CS_POLARITY; 
+     uint8_t mode = SPI_MODE_0 | CS_POLARITY; 
      uint8_t bits = 32;  // This is the highest the current driver will let us go. The ECSPI hardware can go higher. 
  
      printf("Device %s @ %u Hz  | Words per payload: %u | Receving %u packets | Payload bytes: %lu | Packet bytes: %lu \n",

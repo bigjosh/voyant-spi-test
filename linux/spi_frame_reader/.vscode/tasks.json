@@ -27,7 +27,7 @@
             "args": [
               // "-q",   // quiet; delete this item if you like progress bars
               "${workspaceFolder}/spi_frame_reader",
-              "root@10.0.0.41:/home/root/spi_frame_reader/spi_frame_reader"
+              "torizon@10.0.0.47:~/spi_frame_reader"
             ],
             "options": { "cwd": "${workspaceFolder}" },
             "problemMatcher": []
@@ -41,8 +41,8 @@
             "type": "shell",
             "command": "ssh",
             "args": [
-              "root@10.0.0.41",
-              "chmod +x ~/spi_frame_reader/spi_frame_reader"
+              "torizon@10.0.0.47",
+              "chmod +x ~/spi_frame_reader"
             ],
             "problemMatcher": []
           },
