@@ -12,6 +12,15 @@ set_property PACKAGE_PIN    M16         [get_ports {multi_spi_miso}]
 set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_miso}]
 
 
+########
+# MOSI #
+########
+
+ 
+set_property PACKAGE_PIN    M15         [get_ports {multi_spi_mosi}]     
+set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_mosi}]
+
+
 #######
 # CLK #
 #######
@@ -37,7 +46,13 @@ set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_miso}]
 # on the carrier board header J2. 
 # Change this when moving to the Voyany PCB 
 # Appears on the Trenz TE0703 carrier on header J2-B8
-set_property PACKAGE_PIN    K17         [get_ports {multi_spi_clk}]  
+
+# TODO: FIX THIS
+
+#set_property PACKAGE_PIN    M22         [get_ports {multi_spi_clk}]  
+# set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_clk}]
+# J2-B8
+set_property PACKAGE_PIN    K17         [get_ports {multi_spi_clk}]    
 set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_clk}]
 
 # 60 MHz → 16.667 ns period, 50 % duty-cycle

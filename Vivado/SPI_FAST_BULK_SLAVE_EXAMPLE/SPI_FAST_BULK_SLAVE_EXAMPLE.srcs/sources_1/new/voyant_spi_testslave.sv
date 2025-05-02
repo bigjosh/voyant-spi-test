@@ -6,7 +6,7 @@
 
 module spi_slave #(
     parameter int BITS_PER_WORD       = 32,             // Sorry, i get confused - there are so many kinds of words in this world!
-    parameter int WORDS_PER_PAYLOAD   = 31,             // 34 data words (does not include CRC which will be appended to the packet)
+    parameter int WORDS_PER_PACKET    = 31,             // Must match reciever or else reciever will see errors
     parameter int ECSPI_BUFFER_DEPTH  = 36             // This is from the i.MX8MP reference. As long as we send less than this, we should not have to worry 
                                                        // about overflows on the CPU side. 
     
@@ -23,7 +23,8 @@ module spi_slave #(
 
     // A payload is the useful data in a packet, does not include the CRC that will be appened before transmision.
     // Note that the major index starts at 0, so index 0 will be MSB and go out the wire first.
-    typedef logic [0:WORDS_PER_PAYLOAD-1][BITS_PER_WORD-1:0] payload_t;    
+    typedef logic [0:WORDS_PER_PAYLOAD-1][BITS_PER_WORD-1:0] packet_t;    
+
 
   
     u32_t next_packet_seq  = 32'd0;       // A running global packet sequnece number just to keep things changing.
@@ -78,6 +79,17 @@ module spi_slave #(
         u32_t     crc;          // This is the last thing to get shifted out becuase our SPI is MSB first.            
     } packet_t;
     
+
+    // Drop-in test packet, handy for baseline testing    
+    packet_t simple_packet  = '{
+        crc     : 32'hFFEEDDCC,
+        payload : '{ default : 32'h0,
+                     1 : 32'hFFFF_FFFF,
+                     3 : 32'hCAFE_BABE,
+                     4 : 32'hDEAD_BABE
+                   }
+    };
+        
     
     // -----------------------------------------------------------------------------
     // Turns a payload_t into a packet_t by adding a 32-bit CRC to the end 
@@ -123,7 +135,7 @@ module spi_slave #(
     
     
     // Out level of the MISO pin when CS is Active
-    logic miso_out = 1'b0;
+    logic miso_out;
     
     //always_ff @(posedge multi_spi_cs)
     //  miso_out <= 1'b0;
@@ -146,42 +158,37 @@ module spi_slave #(
     // Load-or-shift
     // ---------------------------------------------------------------------
     always_ff @(posedge multi_spi_clk) begin
-    
+ 
+ 
+/*    
         if (cs_rise) begin
     
             // new rising CS edge since the last clk rising edge 
             // load a BRAND-NEW packet
-            
-            /*
-            static packet_t new_packet  = '{
-                header  : 32'hFFEEDDCC,
-                payload : '{ default : 32'h0,
-                             1 : 32'hFFFF_FFFF,
-                             3 : 32'hCAFE_BABE,
-                             4 : 32'hDEAD_BABE,
-                             5 : packet_seq
-                           }
-            };
-            
-            */
-                        
+                                    
             static packet_t new_packet = build_packet( build_payload( next_packet_seq ) );
 
-            miso_out  <= new_packet[$high(new_packet)]; // new packet's MSB
+            miso_out  = new_packet[$high(new_packet)]; // new packet's MSB
             shift_reg <= new_packet << 1;
            
             // Update sequnce number for next packet;              
             next_packet_seq <= next_packet_seq + 1;
         end
         else begin      
-            miso_out  <= shift_reg[$high(shift_reg)];
+            miso_out  = shift_reg[$high(shift_reg)];
             shift_reg <= shift_reg << 1;                    
         end
+        
+*/        
+
+        shift_reg <= shift_reg << 1;                            
     end
                 
     // -------------------------------------------------------------------------
     //  Tri-state MISO when CS low
     // -------------------------------------------------------------------------
+    
+    assign miso_out = shift_reg[$high(shift_reg)];
     
     assign multi_spi_miso = multi_spi_cs ? miso_out : 1'bz;
 
