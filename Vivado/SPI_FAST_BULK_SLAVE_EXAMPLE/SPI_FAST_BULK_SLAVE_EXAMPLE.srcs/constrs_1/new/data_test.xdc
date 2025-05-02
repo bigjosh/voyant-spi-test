@@ -1,24 +1,37 @@
 
-########
-# MISO #
-########
+######
+# CS #
+######
 
+# Finally we need the chip select. This comes from the MCU and starts a 
+# new data frame from the FPGA side. When the FPGA sees this go high,
+# it will start sending at the begining of a new frame.
+
+# On the MCU, this is called FPGA_SPI_SSN
+# It goes into the FPGA on B_15_L22_P which maps to pin  L15
+# On carrier board at header  J2-B6
+
+set_property PACKAGE_PIN    L15         [get_ports {qspi_cs}]  
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_cs}]
+
+
+# MOSI 
+set_property PACKAGE_PIN    M15         [get_ports {qspi_dat0}]     
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat0}]
 
 # MULTI_SPI_MISO is on signal B15_L24_N directly from the Voyant schematic
 # This is FPGA pin M16
 # Appears on the Trenz TE0703 carrier on header J2-A7
- 
-set_property PACKAGE_PIN    M16         [get_ports {multi_spi_miso}]     
-set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_miso}]
 
+# MISO 
+set_property PACKAGE_PIN    M16         [get_ports {qspi_dat1}]     
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat1}]
 
-########
-# MOSI #
-########
+set_property PACKAGE_PIN    W14         [get_ports {qspi_dat2}]     
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat2}]
 
- 
-set_property PACKAGE_PIN    M15         [get_ports {multi_spi_mosi}]     
-set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_mosi}]
+set_property PACKAGE_PIN    AB13        [get_ports {qspi_dat3}]     
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat3}]
 
 
 #######
@@ -52,19 +65,13 @@ set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_mosi}]
 #set_property PACKAGE_PIN    M22         [get_ports {multi_spi_clk}]  
 # set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_clk}]
 # J2-B8
-set_property PACKAGE_PIN    K17         [get_ports {multi_spi_clk}]    
-set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_clk}]
-
-# 60 MHz → 16.667 ns period, 50 % duty-cycle
-create_clock -name {spi_clk}           \
-             -period 16.667            \
-             -waveform {0 8.333}       \
-             [get_ports multi_spi_clk]
+set_property PACKAGE_PIN    K17         [get_ports {qspi_clk}]    
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_clk}]
 
 
 # 1. Tell synthesis not to add a BUFG becuase this clock is completely external
 #    and we only need it here for ourselves.  
-set_property CLOCK_BUFFER_TYPE NONE [get_ports {multi_spi_clk}]
+set_property CLOCK_BUFFER_TYPE NONE [get_ports {qspi_clk}]
 
 ######
 # CS #
@@ -78,8 +85,8 @@ set_property CLOCK_BUFFER_TYPE NONE [get_ports {multi_spi_clk}]
 # It goes into the FPGA on B_15_L22_P which maps to pin  L15
 # On carrier board at header  J2-B6
 
-set_property PACKAGE_PIN    L15         [get_ports {multi_spi_cs}]  
-set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_cs}]
+set_property PACKAGE_PIN    L15         [get_ports {qspi_cs}]  
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_cs}]
 
 
 
@@ -99,3 +106,12 @@ set_property PULLTYPE       PULLDOWN    [get_ports {gnd}]
 ###############################################################################
 set_property PACKAGE_PIN J16        [get_ports    led]
 set_property IOSTANDARD  LVCMOS18   [get_ports    led]
+
+# J2-A8
+set_property PACKAGE_PIN H17        [get_ports    debug1]
+set_property IOSTANDARD  LVCMOS18   [get_ports    debug1]
+
+# J2-A9
+set_property PACKAGE_PIN H18        [get_ports    debug2]
+set_property IOSTANDARD  LVCMOS18   [get_ports    debug2]
+
