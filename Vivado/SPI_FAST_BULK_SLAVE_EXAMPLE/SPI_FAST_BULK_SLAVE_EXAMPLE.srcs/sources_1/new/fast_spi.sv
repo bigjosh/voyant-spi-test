@@ -44,11 +44,9 @@ module top (
     
     
     // This is sent to the master when it issues OPCODE_READ_ID
-    // Is there any way 
+    // Taken from datasheet page 34 
     localparam [31:0] JEDEC_ID        = {    
-        //'h20,   //  Manufacturer=Micron
-        8'h85,   //  TEST
-
+        8'h20,   //  Manufacturer=Micron
         8'hBB,   //  Memory type=1.8V
         8'h22,   //  Capacity=2gb
         8'h00    // Num bytes remaing in this ID (non-standard) 
@@ -203,12 +201,10 @@ module top (
                                 
                                 // BElow is overly ugly becuase we can not access the shift reg directly from the negedge clk always so we get everything ready here 
                                 // Preload the first bit
-                                next_bit_out = 1'b1; //  shift_out_x1[ $high(JEDEC_ID) ];
-                    
-                                shift_out_x1[ $high(shift_out_x1) -: 23 ] <= { 7'h01 , 8'h02 , 8'h03 };
+                                next_bit_out = JEDEC_ID[ $high(JEDEC_ID) ];
                     
                                 // stuff the rest of the bits into the shift register
-                                //shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) -1 : 0]  };
+                                shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) -1 : 0]  };
                                 
                                 // Enable our half of the output enable. The negedge clk will enable the other half and then the pin will be output
                                 io1_oe_pos <= 1'b1;
