@@ -51,7 +51,20 @@ module top (
         8'h22,   //  Capacity=2gb
         8'h00    // Num bytes remaing in this ID (non-standard) 
     };  
-                                                        
+    
+    
+/*
+
+    // Alternate part just in case
+    
+    localparam [31:0] JEDEC_ID        = {    
+        8'hef,   //  Manufacturer=Winbond W25Q128
+        8'h40,   //  Memory type=1.8V
+        8'h18,   //  Capacity=2gb
+        8'h00    // Num bytes remaing in this ID (non-standard) 
+    };  
+        
+*/                                                        
     localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
 
     // IO0 
