@@ -263,7 +263,7 @@ module top (
                         // TODO: THIS SHOULD BE MACRO
                         
                         // Preload the first bit
-                        next_bit_out =   shift_out_x1[ $high(DATA_PATTERN) ];
+                        next_bit_out =   DATA_PATTERN[ $high(DATA_PATTERN) ];
                 
                         // stuff the rest of the bits into the shift register                                                      
                         shift_out_x1[ $high(shift_out_x1) -: ($bits(DATA_PATTERN)-1) ] <= { DATA_PATTERN[ $high( DATA_PATTERN ) -1 : 0]  };
