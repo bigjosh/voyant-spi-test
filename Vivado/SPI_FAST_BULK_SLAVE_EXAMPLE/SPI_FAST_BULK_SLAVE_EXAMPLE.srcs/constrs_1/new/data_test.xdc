@@ -24,7 +24,7 @@ set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat0}]
 # Appears on the Trenz TE0703 carrier on header J2-A7
 
 # MISO 
-set_property PACKAGE_PIN    M16         [get_ports {qspi_dat1}]     
+set_property PACKAGE_PIN    M16         [get_ports {qspi_dat1}]           
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat1}]
 
 set_property PACKAGE_PIN    W14         [get_ports {qspi_dat2}]     
@@ -115,3 +115,6 @@ set_property IOSTANDARD  LVCMOS18   [get_ports    debug1]
 set_property PACKAGE_PIN H18        [get_ports    debug2]
 set_property IOSTANDARD  LVCMOS18   [get_ports    debug2]
 
+
+# Nessisary to avoid warnings about the always blocks on both pos and neg of clk
+# set_clock_groups -asynchronous -group {qspi_clk} -group {qspi_clk_falling}

@@ -44,66 +44,241 @@ module top (
                                                         //  0x20 = Manufacturer
                                                         //  0xBA = Memory type
                                                         //  0x19 = Capacity
+                                                        
+                                                        
     localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
 
-    // ---------------------------------------------------------------------
-    //  Internal tri-state drivers for the four IO lines
-    // ---------------------------------------------------------------------
-    //  Each IO pin gets:
-    //      • out val
-    //      • output-enable (active-HIGH = we drive, LOW = high-Z)
-    //  (Input is simply the value read from the inout when OE=0)
-    // ---------------------------------------------------------------------
+    // IO0 
+    // in x1 mode, this is MOSI
+    logic io0_out, io0_oe_pos, io0_oe_neg;
+    assign qspi_dat0 = (io0_oe_pos & io0_oe_neg) ? io0_out : 1'bz;
+    
+    wire  io0_in     = qspi_dat0;
 
-    // IO0 ------------------------------------------------------------------
-    logic io0_out, io0_oe;
-    assign qpsi_dat0 = io0_oe ? io0_out : 1'bz;
-    wire  io0_in     = qpsi_dat0;
+    // IO1 
+    // in x1 mode this is MISO (an output)
+    logic io1_out, io1_oe_pos, io1_oe_neg;
+    assign qspi_dat1 = (io1_oe_pos & io1_oe_neg) ? io1_out : 1'bz;
 
-    // IO1 ------------------------------------------------------------------
-    logic io1_out, io1_oe;
-    assign qpsi_dat1 = io1_oe ? io1_out : 1'bz;
-    wire  io1_in     = qpsi_dat1;
+    wire  io1_in     = qspi_dat1;
 
     // IO2 ------------------------------------------------------------------
-    logic io2_out, io2_oe;
-    assign qpsi_dat2 = io2_oe ? io2_out : 1'bz;
-    wire  io2_in     = qpsi_dat2;
+    logic io2_out, io2_oe_pos, io2_oe_neg;
+    assign qspi_dat2 = (io2_oe_pos & io2_oe_neg) ? io2_out : 1'bz;
+    wire  io2_in     = qspi_dat2;
 
     // IO3 ------------------------------------------------------------------
-    logic io3_out, io3_oe;
-    assign qpsi_dat3 = io3_oe ? io3_out : 1'bz;
-    wire  io3_in     = qpsi_dat3;
+    logic io3_out, io3_oe_pos, io3_oe_neg;
+    assign qspi_dat3 = (io3_oe_pos & io3_oe_neg) ? io3_out : 1'bz;
+    wire  io3_in     = qspi_dat3;
 
     // ---------------------------------------------------------------------
     //  Very small control state-machine
     // ---------------------------------------------------------------------
     typedef enum logic [2:0] {
-        ST_IDLE          = 3'd0,   // Waiting for 1st bit of a new command
-        ST_CMD_CAPTURE   = 3'd1,   // Shifting in 8-bit op-code
-        ST_JEDEC_TX      = 3'd2,   // Streaming 24-bit JEDEC ID (single-bit IO1)
-        ST_QOFR_ADDR     = 3'd3,   // Capturing 24-bit address (discarded)
-        ST_QOFR_DUMMY    = 3'd4,   // 8 dummy cycles before data phase
-        ST_QOFR_DATA     = 3'd5    // Infinite x4 data stream
+        ST_CMD_CAPTURE   = 3'd1,   // Shifting in 8-bit op-code (this is default idle state)
+        ST_SHIFT_TX1     = 3'd2,   // Shifting out what ever is in shift_out on dat1 forever
+        ST_SHIFT_TX4     = 3'd3,   // Shifting out what ever is in shift_out on dat1 forever
+        
+        ST_QOFR_ADDR     = 3'd4,   // Capturing 24-bit address (discarded)
+        ST_QOFR_DUMMY    = 3'd5,   // 8 dummy cycles before data phase
+        ST_QOFR_DATA     = 3'd6,   // Infinite x4 data stream
+        ST_DEAD          = 3'd7    // Do nothing, wait for a CS reset 
     } state_t;
 
-    state_t state, nxt_state;
+    state_t state;
+        
+           
+    // Whatever is in here goes out the door when in ST_SHIFT_OUT
+    // Note we do not bother to keep a bit counter because if the master asks for more bits
+    /// than we have, we mind as well send 0's, right?
+    // sinlge bit SPI
+    logic [31:0] shift_out_x1;
+    
+    `define STUFF_INTO_SHIFT_OUT(x) shift_out_x1[ $high(shift_out_x1) -: $bits(x) ] <= x
+
+    
+    // Quad shift out
+    logic [63:0] shift_out_x4;
+    
+    // Incoming command byte
+    logic [7:0] shift_in_x1;
     
     
-    // Just se we can see whats going on
-    assign debug1 = (state == ST_CMD_CAPTURE) ? 1'b1 : 1'b0 ;
-    assign debug2 = (state == ST_JEDEC_TX   ) ? 1'b1 : 1'b0 ;
+    // a bit_counter, means didfferent things in different states
+    // In ST_CMD_CAPTURE: This is number of command bits in shift_in_x1 so far (<8)   
+    logic [4:0] bit_cnt;         // How many bits in shift_in_x1 so far?
     
+    // Written to by posedge clk, read by negedge clk
+    // we need this becuase the master reads MISO on the posedge
+    logic next_bit_out;
+    
+    assign debug1 = shift_in_x1[0];    
+    assign debug2 = shift_in_x1[1];
+    
+    
+    // When sending, we need to update our outputs on the negedge CLK so they will be ready for the master to sample on the posedge      
+    always_ff @(negedge qspi_clk , posedge qspi_cs ) begin 
+    
+        if ( qspi_cs ) begin
+        
+            // CS deactive, so reset out half of the output enable            
+            io0_oe_neg <= 1'b0;
+            io1_oe_neg <= 1'b0;
+            io2_oe_neg <= 1'b0;
+            io3_oe_neg <= 1'b0;
+            
+        end else begin 
+        
+            // CS active 
+    
+            if (state == ST_SHIFT_TX1) begin
+            
+                // Our only job here is to get the next bit onto the pin on the posedge clk
+                // everything else happens on the negedge to keep it in the same clk domain.
+                 
+                io1_out <= next_bit_out;
+                io1_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set  
+                
+            end else begin
+            
+                // Any non-transmit state? disable our half of the output enable. 
+                io0_oe_neg <= 1'b0;
+                io1_oe_neg <= 1'b0;
+                io2_oe_neg <= 1'b0;
+                io3_oe_neg <= 1'b0;
+                
+            end        
+        end     
+    end
+        
+    // I really want to make a task `load_shift_out( logic val[*] )` here, but I don't know how. Do you?
 
-    // -------------------------------------------------------------
-    //  Bit counters & shift registers
-    // -------------------------------------------------------------
-    logic [7:0]  cmd_shift;       // For capturing op-code (MSB first)
-    logic [4:0]  bit_cnt;         // Up to -- 24 address bits, 8 dummy, etc.
 
-    logic [23:0] jedec_shift;     // For transmitting JEDEC ID (MSB first)
-    logic [63:0] data_shift;      // Pattern shifter for Quad-Read data nibble
+    // Main logic            
+    always_ff @(posedge qspi_clk, posedge qspi_cs) begin
+    
+        if (qspi_cs) begin
 
+            // If CS not asserted then we reset everything        
+            state       <= ST_CMD_CAPTURE;      // Always reset to waiting for a command after CS deassertion. 
+            bit_cnt     <= '0;                  // bits rx so far
+            
+            // All outputs high-Z
+            io0_oe_pos <= 0; 
+            io1_oe_pos <= 0; 
+            io2_oe_pos <= 0; 
+            io3_oe_pos <= 0;
+            
+        end else begin
+        
+            // CS is asserted
+        
+            case (state)
+
+                ST_CMD_CAPTURE: begin
+                
+                    // Note this is a blocking assignment 
+                    //logic next_shift_in_x1 =  {shift_in_x1[6:0], io0_in};
+    
+                    if (bit_cnt == 3'd7) begin     
+                    
+                        // We read 7 bits, so with this current one we have all 8!
+
+                        unique case ( {shift_in_x1[6:0], io0_in} ) 
+                        
+                            OPCODE_JEDEC_ID:  begin
+                            
+                                // This command is the master asking us for our ID, so we send it.                              
+                                
+                                // Preload the first bit
+                                next_bit_out =   shift_out_x1[ $high(shift_out_x1) ];
+                    
+                                // stuff the rest of the bits into the shift register                                                      
+                                shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) : 0]  };
+                                
+                                // Enable our half of the output enable. The posedge clk will enable the other half and then the pin will be output
+                                io1_oe_pos <= 1'b1;
+                                                                                                        
+                                // switch to sending mode
+                                state <= ST_SHIFT_TX1;
+                                
+                                // Note that we do not actually put the bit on the pin, and we do not set the pin for output,
+                                // those happen in the always posedge clk abvove.  
+                                        
+                            end
+                                                        
+                            
+    //                        OPCODE_QOFR:      state <= ST_QOFR_ADDR;
+                            default:          state <= ST_DEAD; // Unsupported op, go dead wait for next CS reset
+                            
+                        endcase
+  
+  
+                                                             
+                     end else begin // else if (bit_cnt == 3'd7) begin 
+                     
+                        shift_in_x1 <= {shift_in_x1[6:0], io0_in};
+                        bit_cnt   <= bit_cnt + 1;
+                                         
+                    end // if (bit_cnt == 3'd7) begin 
+                    
+                    
+                end // ST_CMD_CAPTURE
+                
+                
+                ST_SHIFT_TX1: begin
+                
+                    // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
+                    next_bit_out =   shift_out_x1[ $high(shift_out_x1) ];
+                    shift_out_x1 <= shift_out_x1 << 1;
+                    
+                end
+    
+    /*
+                // ---------------------------------------------------------
+                ST_QOFR_ADDR: begin
+                    // Swallow 24 address bits on IO0; nothing is driven
+                    bit_cnt <= bit_cnt + 1;
+                    if (bit_cnt == 5'd23) begin
+                        state   <= ST_QOFR_DUMMY;
+                        bit_cnt <= '0;
+                    end
+                end
+        
+                // ---------------------------------------------------------
+                ST_QOFR_DUMMY: begin
+                    // Wait 8 "dummy" clock cycles (one per incoming bit)
+                    bit_cnt <= bit_cnt + 1;
+                    if (bit_cnt == 3'd7) begin
+                        state   <= ST_QOFR_DATA;
+                        bit_cnt <= '0;
+        
+                        // Enable all 4 IO outputs for quad data
+                        io0_oe <= 1; io1_oe <= 1; io2_oe <= 1; io3_oe <= 1;
+                    end
+                end
+        
+                // ---------------------------------------------------------
+                ST_QOFR_DATA: begin
+                    // Present the *upper nibble* of data_shift on IO3:IO0
+                    {io3_out, io2_out, io1_out, io0_out} <= data_shift[63:60];
+        
+                    // Rotate left by 4 bits (nibble) so pattern streams forever
+                    data_shift <= {data_shift[59:0], data_shift[63:60]};
+                    // (No exit condition - master will raise CS_N when finished)
+                end
+        
+                // ---------------------------------------------------------
+                default: state <= ST_IDLE; // Shouldn't happen - safety net
+                
+*/                
+            endcase //  case (state)
+                  
+        end // els of if (qspi_cs)
+            
+    end // always_ff @(posedge qspi_clk, posedge qspi_cs) begin
+    
     // LED heartbeat ---------------------------------------------------------
     always_ff @(posedge qspi_clk) begin
         if (state == ST_QOFR_DATA)
@@ -112,108 +287,6 @@ module top (
 
     // gnd pin is always tied low -------------------------------------------
     assign gnd = 1'b0;
-    
-    // -----------------------------------------------------------------------
-    //  Synchronous control logic
-    //  * Everything driven on the rising edge of qspi_clk while CS_N is LOW *
-    //  * A rising edge of CS_N **asynchronously** resets back to IDLE       *
-    // -----------------------------------------------------------------------
-    always_ff @(posedge qspi_clk, posedge qspi_cs) begin
-        // ---------- CS_N de-asserted → abort current transaction ----------
-        if (qspi_cs) begin
-            state       <= ST_IDLE;
-            bit_cnt     <= '0;
-            cmd_shift   <= '0;
-            jedec_shift <= JEDEC_ID;
-            data_shift  <= DATA_PATTERN;
-
-            // All outputs high-Z
-            io0_oe <= 0; io1_oe <= 0; io2_oe <= 0; io3_oe <= 0;
-            io0_out<=0;  io1_out<=0;  io2_out<=0;  io3_out<=0;
-        end
-        // ----------- Normal operation (CS_N held LOW) ---------------------
-        else begin
-            case (state)
-            // ---------------------------------------------------------
-            ST_IDLE: begin
-                // Begin capturing an 8-bit command (MSB first) on IO0
-                state     <= ST_CMD_CAPTURE;
-                cmd_shift <= {cmd_shift[6:0], io0_in}; // shift-in bit-7 first
-                bit_cnt   <= 3'd1;                     // already captured 1 bit
-            end
-
-            // ---------------------------------------------------------
-            ST_CMD_CAPTURE: begin
-                cmd_shift <= {cmd_shift[6:0], io0_in};
-                bit_cnt   <= bit_cnt + 1;
-
-                if (bit_cnt == 3'd7) begin     // All 8 bits captured
-                    unique case ( {cmd_shift[6:0], io0_in} ) // next-clock value
-                        OPCODE_JEDEC_ID:  state <= ST_JEDEC_TX;
-                        OPCODE_QOFR:      state <= ST_QOFR_ADDR;
-                        default:          state <= ST_IDLE; // Unsupported op
-                    endcase
-                    bit_cnt <= '0;         // Reset counter for next state
-                    jedec_shift <= JEDEC_ID;  // Reload constant for each read
-                    data_shift  <= DATA_PATTERN;
-                end
-            end
-
-            // ---------------------------------------------------------
-            ST_JEDEC_TX: begin
-                // --- DRIVE ONLY IO1 (classic MISO) ------------------
-                io0_oe <= 0;
-                io1_oe <= 1; io1_out <= jedec_shift[23]; // MSB first
-                io2_oe <= 0; io3_oe <= 0;
-
-                // Rotate left 1 bit so next MSB is ready
-                jedec_shift <= jedec_shift[22:0] << 1 ;
-                bit_cnt     <= bit_cnt + 1;
-
-                if (bit_cnt == 5'd23) begin   // Sent 24 bits
-                    state   <= ST_IDLE;       // Remain responsive to op-codes
-                    bit_cnt <= '0;
-                    io1_oe  <= 0;             // Release IO1 when done
-                end
-            end
-
-            // ---------------------------------------------------------
-            ST_QOFR_ADDR: begin
-                // Swallow 24 address bits on IO0; nothing is driven
-                bit_cnt <= bit_cnt + 1;
-                if (bit_cnt == 5'd23) begin
-                    state   <= ST_QOFR_DUMMY;
-                    bit_cnt <= '0;
-                end
-            end
-
-            // ---------------------------------------------------------
-            ST_QOFR_DUMMY: begin
-                // Wait 8 "dummy" clock cycles (one per incoming bit)
-                bit_cnt <= bit_cnt + 1;
-                if (bit_cnt == 3'd7) begin
-                    state   <= ST_QOFR_DATA;
-                    bit_cnt <= '0;
-
-                    // Enable all 4 IO outputs for quad data
-                    io0_oe <= 1; io1_oe <= 1; io2_oe <= 1; io3_oe <= 1;
-                end
-            end
-
-            // ---------------------------------------------------------
-            ST_QOFR_DATA: begin
-                // Present the *upper nibble* of data_shift on IO3:IO0
-                {io3_out, io2_out, io1_out, io0_out} <= data_shift[63:60];
-
-                // Rotate left by 4 bits (nibble) so pattern streams forever
-                data_shift <= {data_shift[59:0], data_shift[63:60]};
-                // (No exit condition - master will raise CS_N when finished)
-            end
-
-            // ---------------------------------------------------------
-            default: state <= ST_IDLE; // Shouldn't happen - safety net
-            endcase
-        end
-    end
-
+       
+     
 endmodule
