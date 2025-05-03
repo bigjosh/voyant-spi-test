@@ -38,13 +38,21 @@ module top (
     // ---------------------------------------------------------------------
     //  Local parameters & convenience aliases
     // ---------------------------------------------------------------------
-    localparam [7:0]  OPCODE_JEDEC_ID = 8'h9F;
+    localparam [7:0]  OPCODE_READ_ID  = 8'h9F;          // Read 24 bit device ID block
+    localparam [7:0]  OPCODE_READ     = 8'h03;          // Read with address (default 24 bit address)
     localparam [7:0]  OPCODE_QOFR     = 8'h6B;          // Quad Output Fast Read
-    localparam [23:0] JEDEC_ID        = 24'h20_BA_19;   // Micron 128-Mbit example
-                                                        //  0x20 = Manufacturer
-                                                        //  0xBA = Memory type
-                                                        //  0x19 = Capacity
-                                                        
+    
+    
+    // This is sent to the master when it issues OPCODE_READ_ID
+    // Is there any way 
+    localparam [31:0] JEDEC_ID        = {    
+        //'h20,   //  Manufacturer=Micron
+        8'h85,   //  TEST
+
+        8'hBB,   //  Memory type=1.8V
+        8'h22,   //  Capacity=2gb
+        8'h00    // Num bytes remaing in this ID (non-standard) 
+    };  
                                                         
     localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
 
@@ -79,8 +87,8 @@ module top (
         ST_CMD_CAPTURE   = 3'd1,   // Shifting in 8-bit op-code (this is default idle state)
         ST_SHIFT_TX1     = 3'd2,   // Shifting out what ever is in shift_out on dat1 forever
         ST_SHIFT_TX4     = 3'd3,   // Shifting out what ever is in shift_out on dat1 forever
-        
-        ST_QOFR_ADDR     = 3'd4,   // Capturing 24-bit address (discarded)
+                        
+        ST_TOSS_A_CLKS   = 3'd4,   // Discard how ever many clocks are in bit_count (used for consuming address bits on read)
         ST_QOFR_DUMMY    = 3'd5,   // 8 dummy cycles before data phase
         ST_QOFR_DATA     = 3'd6,   // Infinite x4 data stream
         ST_DEAD          = 3'd7    // Do nothing, wait for a CS reset 
@@ -93,10 +101,12 @@ module top (
     // Note we do not bother to keep a bit counter because if the master asks for more bits
     /// than we have, we mind as well send 0's, right?
     // sinlge bit SPI
-    logic [31:0] shift_out_x1;
+    logic [63:0] shift_out_x1;
     
-    `define STUFF_INTO_SHIFT_OUT(x) shift_out_x1[ $high(shift_out_x1) -: $bits(x) ] <= x
-
+    // A define becuase I don't think a task or function can take
+    // I know this is ugly, but I don't know a better way to pass a (compile-time) variable len packed array. Do you? 
+    
+    `define STUFF_INTO_SHIFT_OUT(x) shift_out_x1[ $high(shift_out_x1) -: $bits(x) ] <= x; bit_count <= $bits(x); io1_oe_pos <= 1'b1 
     
     // Quad shift out
     logic [63:0] shift_out_x4;
@@ -107,14 +117,14 @@ module top (
     
     // a bit_counter, means didfferent things in different states
     // In ST_CMD_CAPTURE: This is number of command bits in shift_in_x1 so far (<8)   
-    logic [4:0] bit_cnt;         // How many bits in shift_in_x1 so far?
+    logic [5:0] bit_count;         // How many bits in shift_in_x1 so far?
     
     // Written to by posedge clk, read by negedge clk
     // we need this becuase the master reads MISO on the posedge
     logic next_bit_out;
     
-    assign debug1 = shift_in_x1[0];    
-    assign debug2 = shift_in_x1[1];
+    assign debug1 = (state == ST_SHIFT_TX1) ? 1'b1 : 1'b0; 
+    assign debug2 = (state == ST_TOSS_A_CLKS) ? 1'b1 : 1'b0; 
     
     
     // When sending, we need to update our outputs on the negedge CLK so they will be ready for the master to sample on the posedge      
@@ -134,8 +144,8 @@ module top (
     
             if (state == ST_SHIFT_TX1) begin
             
-                // Our only job here is to get the next bit onto the pin on the posedge clk
-                // everything else happens on the negedge to keep it in the same clk domain.
+                // Our only job here is to get the next bit onto the pin on the negedge clk
+                // everything else happens on the posedge to keep it in the same clk domain.
                  
                 io1_out <= next_bit_out;
                 io1_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set  
@@ -162,7 +172,7 @@ module top (
 
             // If CS not asserted then we reset everything        
             state       <= ST_CMD_CAPTURE;      // Always reset to waiting for a command after CS deassertion. 
-            bit_cnt     <= '0;                  // bits rx so far
+            bit_count     <= '0;                  // bits rx so far
             
             // All outputs high-Z
             io0_oe_pos <= 0; 
@@ -181,23 +191,26 @@ module top (
                     // Note this is a blocking assignment 
                     //logic next_shift_in_x1 =  {shift_in_x1[6:0], io0_in};
     
-                    if (bit_cnt == 3'd7) begin     
+                    if (bit_count == 7 ) begin     
                     
                         // We read 7 bits, so with this current one we have all 8!
 
                         unique case ( {shift_in_x1[6:0], io0_in} ) 
                         
-                            OPCODE_JEDEC_ID:  begin
+                            OPCODE_READ_ID:  begin
                             
                                 // This command is the master asking us for our ID, so we send it.                              
                                 
+                                // BElow is overly ugly becuase we can not access the shift reg directly from the negedge clk always so we get everything ready here 
                                 // Preload the first bit
-                                next_bit_out =   shift_out_x1[ $high(shift_out_x1) ];
+                                next_bit_out = 1'b1; //  shift_out_x1[ $high(JEDEC_ID) ];
                     
-                                // stuff the rest of the bits into the shift register                                                      
-                                shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) : 0]  };
+                                shift_out_x1[ $high(shift_out_x1) -: 23 ] <= { 7'h01 , 8'h02 , 8'h03 };
+                    
+                                // stuff the rest of the bits into the shift register
+                                //shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) -1 : 0]  };
                                 
-                                // Enable our half of the output enable. The posedge clk will enable the other half and then the pin will be output
+                                // Enable our half of the output enable. The negedge clk will enable the other half and then the pin will be output
                                 io1_oe_pos <= 1'b1;
                                                                                                         
                                 // switch to sending mode
@@ -207,7 +220,14 @@ module top (
                                 // those happen in the always posedge clk abvove.  
                                         
                             end
-                                                        
+                            
+                            OPCODE_READ:  begin
+                            
+                                // This command is the master asking us for some data, but first we need to get rid of the 24 address bits.
+                                bit_count <= 24;                                                              
+                                state <= ST_TOSS_A_CLKS;
+                                                                        
+                            end
                             
     //                        OPCODE_QOFR:      state <= ST_QOFR_ADDR;
                             default:          state <= ST_DEAD; // Unsupported op, go dead wait for next CS reset
@@ -216,12 +236,12 @@ module top (
   
   
                                                              
-                     end else begin // else if (bit_cnt == 3'd7) begin 
-                     
-                        shift_in_x1 <= {shift_in_x1[6:0], io0_in};
-                        bit_cnt   <= bit_cnt + 1;
+                     end else begin // else if (bit_count == 3'd7) begin 
+                                          
+                        shift_in_x1 <= {shift_in_x1[ $high(shift_in_x1) - 1 :0], io0_in};
+                        bit_count   <= bit_count + 1;
                                          
-                    end // if (bit_cnt == 3'd7) begin 
+                    end // if (bit_count == 3'd7) begin 
                     
                     
                 end // ST_CMD_CAPTURE
@@ -230,54 +250,48 @@ module top (
                 ST_SHIFT_TX1: begin
                 
                     // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
+                    // no count, will keep sending over and over again forever.
                     next_bit_out =   shift_out_x1[ $high(shift_out_x1) ];
                     shift_out_x1 <= shift_out_x1 << 1;
                     
                 end
-    
-    /*
-                // ---------------------------------------------------------
-                ST_QOFR_ADDR: begin
-                    // Swallow 24 address bits on IO0; nothing is driven
-                    bit_cnt <= bit_cnt + 1;
-                    if (bit_cnt == 5'd23) begin
-                        state   <= ST_QOFR_DUMMY;
-                        bit_cnt <= '0;
-                    end
-                end
-        
-                // ---------------------------------------------------------
-                ST_QOFR_DUMMY: begin
-                    // Wait 8 "dummy" clock cycles (one per incoming bit)
-                    bit_cnt <= bit_cnt + 1;
-                    if (bit_cnt == 3'd7) begin
-                        state   <= ST_QOFR_DATA;
-                        bit_cnt <= '0;
-        
-                        // Enable all 4 IO outputs for quad data
-                        io0_oe <= 1; io1_oe <= 1; io2_oe <= 1; io3_oe <= 1;
-                    end
-                end
-        
-                // ---------------------------------------------------------
-                ST_QOFR_DATA: begin
-                    // Present the *upper nibble* of data_shift on IO3:IO0
-                    {io3_out, io2_out, io1_out, io0_out} <= data_shift[63:60];
-        
-                    // Rotate left by 4 bits (nibble) so pattern streams forever
-                    data_shift <= {data_shift[59:0], data_shift[63:60]};
-                    // (No exit condition - master will raise CS_N when finished)
-                end
-        
-                // ---------------------------------------------------------
-                default: state <= ST_IDLE; // Shouldn't happen - safety net
                 
-*/                
+                ST_TOSS_A_CLKS: begin
+                
+                    if (bit_count == 1 ) begin
+                    
+                        // we test for 1 rather than 0 becuase we are on the rising edge of the clk, so cnt not updated yet
+                    
+                        // We are done reading the address bits, so start sending the data!
+                                                
+                        // TODO: THIS SHOULD BE MACRO
+                        
+                        // Preload the first bit
+                        next_bit_out =   shift_out_x1[ $high(DATA_PATTERN) ];
+                
+                        // stuff the rest of the bits into the shift register                                                      
+                        shift_out_x1[ $high(shift_out_x1) -: ($bits(DATA_PATTERN)-1) ] <= { DATA_PATTERN[ $high( DATA_PATTERN ) -1 : 0]  };
+                        
+                        // Enable our half of the output enable. The negedge clk will enable the other half and then the pin will be output
+                        io1_oe_pos <= 1'b1;
+                                                                                                
+                        // switch to sending mode
+                        state <= ST_SHIFT_TX1;
+                                                
+                    end else begin
+                    
+                        bit_count <= bit_count - 1;
+                        
+                    end //  if (bit_count == 1 ) begin
+                                    
+                end // ST_TOSS_A_CLKS:
+    
             endcase //  case (state)
                   
         end // els of if (qspi_cs)
             
     end // always_ff @(posedge qspi_clk, posedge qspi_cs) begin
+
     
     // LED heartbeat ---------------------------------------------------------
     always_ff @(posedge qspi_clk) begin
