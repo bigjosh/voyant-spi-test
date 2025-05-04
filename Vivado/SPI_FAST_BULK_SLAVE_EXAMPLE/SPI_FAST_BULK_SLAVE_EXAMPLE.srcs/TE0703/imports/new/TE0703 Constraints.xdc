@@ -59,11 +59,11 @@ set_property IOSTANDARD  LVCMOS18   [get_ports    led]
 # Some handy debug ports to connect logic analyzer to
 
 # J2-A10
-set_property PACKAGE_PIN L13        [get_ports    debug1]
+set_property PACKAGE_PIN M22        [get_ports    debug1]
 set_property IOSTANDARD  LVCMOS18   [get_ports    debug1]
 
 # J2-A11
-set_property PACKAGE_PIN M13        [get_ports    debug2]
+set_property PACKAGE_PIN N22        [get_ports    debug2]
 set_property IOSTANDARD  LVCMOS18   [get_ports    debug2]
 
 
