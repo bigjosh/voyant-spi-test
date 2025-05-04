@@ -134,11 +134,12 @@ module top (
     logic next_bit_out;
     
     // Written to by posedge clk, read by negedge clk
-    // we need this becuase the master reads MISO on the posedge    
-    logic [3:0] next_quad_out;
+    // we need this becuase the master reads MISO on the posedge
+    // TODO: This could be smaller (and could overflow). What is the right way to allocate this size?    
+    logic [7:0] next_quad_out;
     
-    assign debug1 = (state == ST_SHIFT_TX1) ? 1'b1 : 1'b0; 
-    assign debug2 = (state == ST_SHIFT_TX4) ? 1'b1 : 1'b0; 
+    assign debug1 = (state == ST_CMD_CAPTURE ) ? 1'b1 : 1'b0; 
+    assign debug2 = (state == ST_READ_4X_DUMMY) ? 1'b1 : 1'b0; 
         
     // When sending, we need to update our outputs on the negedge CLK so they will be ready for the master to sample on the posedge      
     always_ff @(negedge qspi_clk , posedge qspi_cs ) begin 
