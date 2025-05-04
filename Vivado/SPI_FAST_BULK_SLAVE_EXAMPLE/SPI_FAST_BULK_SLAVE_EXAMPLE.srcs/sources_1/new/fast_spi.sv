@@ -38,18 +38,17 @@ module top (
     // ---------------------------------------------------------------------
     //  Local parameters & convenience aliases
     // ---------------------------------------------------------------------
-    localparam [7:0]  OPCODE_READ_ID  = 8'h9F;          // Read 24 bit device ID block
-    localparam [7:0]  OPCODE_READ     = 8'h03;          // Read with address (default 24 bit address)
-    localparam [7:0]  OPCODE_QOFR     = 8'h6B;          // Quad Output Fast Read
-    
-    
+    localparam [7:0]  OPCODE_READ_ID    = 8'h9F;          // Read 24 bit device ID block
+    localparam [7:0]  OPCODE_READ       = 8'h03;          // Read with address (default 24 bit address)
+    localparam [7:0]  OPCODE_QOFR       = 8'h6B;          // Quad Output Fast Read
+        
     // This is sent to the master when it issues OPCODE_READ_ID
     // Taken from datasheet page 34 
     localparam [31:0] JEDEC_ID        = {    
         8'h20,   //  Manufacturer=Micron
         8'hBB,   //  Memory type=1.8V
-        8'h22,   //  Capacity=2gb
-        8'h00    // Num bytes remaing in this ID (non-standard) 
+        8'h17,   //  Capacity=16Mb = 8MB. This is small enough that the driver will only use 3-byte addressing, saving us a byte on each transaction. 
+        8'h00    //  Num bytes remaing in this ID (non-standard, but works with spi-nor driver) 
     };  
     
     
@@ -65,7 +64,8 @@ module top (
     };  
         
 */                                                        
-    localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
+//    localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
+    localparam [63:0] DATA_PATTERN    = 64'h01234567_89ABCDEF;
 
     // IO0 
     // in x1 mode, this is MOSI
@@ -97,11 +97,9 @@ module top (
     typedef enum logic [2:0] {
         ST_CMD_CAPTURE   = 3'd1,   // Shifting in 8-bit op-code (this is default idle state)
         ST_SHIFT_TX1     = 3'd2,   // Shifting out what ever is in shift_out on dat1 forever
-        ST_SHIFT_TX4     = 3'd3,   // Shifting out what ever is in shift_out on dat1 forever
-                        
-        ST_TOSS_A_CLKS   = 3'd4,   // Discard how ever many clocks are in bit_count (used for consuming address bits on read)
-        ST_QOFR_DUMMY    = 3'd5,   // 8 dummy cycles before data phase
-        ST_QOFR_DATA     = 3'd6,   // Infinite x4 data stream
+        ST_SHIFT_TX4     = 3'd3,   // Shifting out what ever is in shift_out on dat[0:3] forever                        
+        ST_READ_1X_DUMMY = 3'd4,   // Discard how ever many clocks are in bit_count then go to ST_SHIFT_TX1 (used for consuming address bits on read)
+        ST_READ_4X_DUMMY = 3'd5,   // Discard how ever many clocks are in bit_count then go to ST_SHIFT_TX4 (used for consuming address bits on read)
         ST_DEAD          = 3'd7    // Do nothing, wait for a CS reset 
     } state_t;
 
@@ -127,17 +125,21 @@ module top (
     
     
     // a bit_counter, means didfferent things in different states
-    // In ST_CMD_CAPTURE: This is number of command bits in shift_in_x1 so far (<8)   
-    logic [5:0] bit_count;         // How many bits in shift_in_x1 so far?
+    // In ST_CMD_CAPTURE: This is number of command bits in shift_in_x1 so far (<8)  
+    // In ST_READ_Xx_DUMMY: This is the number of dummy bits to read before switching to READ state 
+    logic [7:0] bit_count;         // How many bits in shift_in_x1 so far?
     
     // Written to by posedge clk, read by negedge clk
     // we need this becuase the master reads MISO on the posedge
     logic next_bit_out;
     
+    // Written to by posedge clk, read by negedge clk
+    // we need this becuase the master reads MISO on the posedge    
+    logic [3:0] next_quad_out;
+    
     assign debug1 = (state == ST_SHIFT_TX1) ? 1'b1 : 1'b0; 
-    assign debug2 = (state == ST_TOSS_A_CLKS) ? 1'b1 : 1'b0; 
-    
-    
+    assign debug2 = (state == ST_SHIFT_TX4) ? 1'b1 : 1'b0; 
+        
     // When sending, we need to update our outputs on the negedge CLK so they will be ready for the master to sample on the posedge      
     always_ff @(negedge qspi_clk , posedge qspi_cs ) begin 
     
@@ -161,6 +163,21 @@ module top (
                 io1_out <= next_bit_out;
                 io1_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set  
                 
+            end else if (state == ST_SHIFT_TX4 ) begin 
+
+                // Our only job here is to get the next bit onto the pin on the negedge clk
+                // everything else happens on the posedge to keep it in the same clk domain.
+                 
+                io0_out <= next_quad_out[0];
+                io1_out <= next_quad_out[1];
+                io2_out <= next_quad_out[2];
+                io3_out <= next_quad_out[3];
+
+                io0_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set
+                io1_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set
+                io2_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set
+                io3_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set
+                  
             end else begin
             
                 // Any non-transmit state? disable our half of the output enable. 
@@ -168,7 +185,7 @@ module top (
                 io1_oe_neg <= 1'b0;
                 io2_oe_neg <= 1'b0;
                 io3_oe_neg <= 1'b0;
-                
+                            
             end        
         end     
     end
@@ -233,10 +250,20 @@ module top (
                             OPCODE_READ:  begin
                             
                                 // This command is the master asking us for some data, but first we need to get rid of the 24 address bits.
-                                bit_count <= 24;                                                              
-                                state <= ST_TOSS_A_CLKS;
+                                bit_count <= 24 ;                                                              
+                                state <= ST_READ_1X_DUMMY;
                                                                         
                             end
+                            
+                            OPCODE_QOFR:  begin
+                            
+                                // This command is the master asking us for some data on quad IO lines, but first we need to get rid of the 24 address bits + 8 dummy bits
+                                bit_count <= (3*8) + (8) ;    // 3 address bytes + 8 dummy bits. TODO: We can get rid of the dummies by implementing the capabilities table.                                                               
+                                state <= ST_READ_4X_DUMMY;
+                                                                        
+                            end
+                            
+                            
                             
     //                        OPCODE_QOFR:      state <= ST_QOFR_ADDR;
                             default:          state <= ST_DEAD; // Unsupported op, go dead wait for next CS reset
@@ -265,7 +292,17 @@ module top (
                     
                 end
                 
-                ST_TOSS_A_CLKS: begin
+                ST_SHIFT_TX4: begin
+                
+                    // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
+                    // no count, will keep sending over and over again forever.
+                    next_quad_out =   shift_out_x1[ $high(shift_out_x1) -: 4 ];
+                    shift_out_x1 <= shift_out_x1 << 4;
+                    
+                end
+                
+                
+                ST_READ_1X_DUMMY: begin
                 
                     if (bit_count == 1 ) begin
                     
@@ -292,8 +329,43 @@ module top (
                         bit_count <= bit_count - 1;
                         
                     end //  if (bit_count == 1 ) begin
-                                    
-                end // ST_TOSS_A_CLKS:
+                                                        
+                end // ST_READ_1X_DUMMY
+                
+                ST_READ_4X_DUMMY: begin
+                
+                    // This is the same as ST_READ_1X_DUMMY, except that when the count is done it will load 4 bits into io_ou[0:3] and then jump to state ST_SHIFT_TX4
+                
+                    if (bit_count == 1 ) begin
+                    
+                        // we test for 1 rather than 0 becuase we are on the rising edge of the clk, so cnt not updated yet
+                    
+                        // We are done reading the address bits, so start sending the data!
+                                                
+                        // TODO: THIS SHOULD BE MACRO
+                        
+                        // Preload the 4 bits
+                        next_quad_out =   DATA_PATTERN[ $high(DATA_PATTERN) -: 4 ];
+                
+                        // stuff the rest of the bits into the shift register                                                      
+                        shift_out_x1[ $high(shift_out_x1) -: ($bits(DATA_PATTERN)-4) ] <= { DATA_PATTERN[ $high( DATA_PATTERN ) -4 : 0]  };
+                        
+                        // Enable our half of the output enable. The negedge clk will enable the other half and then the pin will be output
+                        io0_oe_pos <= 1'b1;
+                        io1_oe_pos <= 1'b1;
+                        io2_oe_pos <= 1'b1;
+                        io3_oe_pos <= 1'b1;
+                                                                                                
+                        // switch to sending mode
+                        state <= ST_SHIFT_TX4;
+                                                
+                    end else begin
+                    
+                        bit_count <= bit_count - 1;
+                        
+                    end //  if (bit_count == 1 ) begin
+                    
+                end // ST_READ_4X_DUMMY:
     
             endcase //  case (state)
                   
@@ -302,13 +374,10 @@ module top (
     end // always_ff @(posedge qspi_clk, posedge qspi_cs) begin
 
     
-    // LED heartbeat ---------------------------------------------------------
-    always_ff @(posedge qspi_clk) begin
-        if (state == ST_QOFR_DATA)
-            led <= ~led;          // Blink while streaming data
-    end
-
-    // gnd pin is always tied low -------------------------------------------
+    // LED on when we are active
+    assign led = 1'b0;
+    
+    // gnd pin is always tied low for convienice
     assign gnd = 1'b0;
        
      
