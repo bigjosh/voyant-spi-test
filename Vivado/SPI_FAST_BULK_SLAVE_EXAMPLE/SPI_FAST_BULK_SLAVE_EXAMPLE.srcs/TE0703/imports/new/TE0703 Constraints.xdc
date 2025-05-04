@@ -1,20 +1,29 @@
+#### These values are for the TE0703 carrier board
+#### Tried to match the Voyant PCB when possible, but when not possible picked easy to access pins.
 
-######
-# CS #
-######
 
-# Finally we need the chip select. This comes from the MCU and starts a 
-# new data frame from the FPGA side. When the FPGA sees this go high,
-# it will start sending at the begining of a new frame.
+## CS
 
-# On the MCU, this is called FPGA_SPI_SSN
-# It goes into the FPGA on B_15_L22_P which maps to pin  L15
-# On carrier board at header  J2-B6
+# On the SOM this is called signal QSPI_SSN 
+# On Dhalia this comes out on X19-5
+# It goes into the TE0712 module on B_15_L22_P which maps to pin  L15
+# On TE0703 carrier board at header  J2-B6
 
 set_property PACKAGE_PIN    L15         [get_ports {qspi_cs}]  
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_cs}]
 
 
+## CLK
+
+# On Dhalia this comes out on X19-4 
+# Connects to FPGA pin Y12
+# On TE0703 carrier comes on J2-B8
+
+set_property PACKAGE_PIN    K17         [get_ports {qspi_clk}]    
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_clk}]
+
+
+# DATA PINS
 # MOSI 
 set_property PACKAGE_PIN    M15         [get_ports {qspi_dat0}]     
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat0}]
@@ -27,10 +36,10 @@ set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat0}]
 set_property PACKAGE_PIN    M16         [get_ports {qspi_dat1}]           
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat1}]
 
-set_property PACKAGE_PIN    W14         [get_ports {qspi_dat2}]     
+set_property PACKAGE_PIN    H17         [get_ports {qspi_dat2}]     
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat2}]
 
-set_property PACKAGE_PIN    AB13        [get_ports {qspi_dat3}]     
+set_property PACKAGE_PIN    H18        [get_ports {qspi_dat3}]     
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat3}]
 
 
@@ -60,13 +69,6 @@ set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat3}]
 # Change this when moving to the Voyany PCB 
 # Appears on the Trenz TE0703 carrier on header J2-B8
 
-# TODO: FIX THIS
-
-#set_property PACKAGE_PIN    M22         [get_ports {multi_spi_clk}]  
-# set_property IOSTANDARD     LVCMOS18    [get_ports {multi_spi_clk}]
-# J2-B8
-set_property PACKAGE_PIN    K17         [get_ports {qspi_clk}]    
-set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_clk}]
 
 
 # 1. Tell synthesis not to add a BUFG becuase this clock is completely external
