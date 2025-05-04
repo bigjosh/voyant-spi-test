@@ -30,8 +30,8 @@ module top (
     // ---- "spare" pins from the original template ---------------------------
     output logic        gnd,          // Hard-wired ZERO - makes PCB nets happy
     output logic        led,          // Heart-beat LED (blinks on any read)
-    output logic        debug1,       // On logic analyzer
-    output logic        debug2        // On logic analyzer
+    output logic        debugA,       // On logic analyzer
+    output logic        debugB        // On logic analyzer
     
 );
 
@@ -65,7 +65,7 @@ module top (
         
 */                                                        
 //    localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
-    localparam [63:0] DATA_PATTERN    = 64'h01234567_89ABCDEF;
+    localparam [127:0] DATA_PATTERN    = 128'h01234567_89ABCDEF_FEDCBA98_76543210;
 
     // IO0 
     // in x1 mode, this is MOSI
@@ -110,16 +110,13 @@ module top (
     // Note we do not bother to keep a bit counter because if the master asks for more bits
     /// than we have, we mind as well send 0's, right?
     // sinlge bit SPI
-    logic [63:0] shift_out_x1;
+    logic [127:0] shift_out_x1;
     
     // A define becuase I don't think a task or function can take
     // I know this is ugly, but I don't know a better way to pass a (compile-time) variable len packed array. Do you? 
     
     `define STUFF_INTO_SHIFT_OUT(x) shift_out_x1[ $high(shift_out_x1) -: $bits(x) ] <= x; bit_count <= $bits(x); io1_oe_pos <= 1'b1 
-    
-    // Quad shift out
-    logic [63:0] shift_out_x4;
-    
+        
     // Incoming command byte
     logic [7:0] shift_in_x1;
     
@@ -136,16 +133,31 @@ module top (
     // Written to by posedge clk, read by negedge clk
     // we need this becuase the master reads MISO on the posedge
     // TODO: This could be smaller (and could overflow). What is the right way to allocate this size?    
-    logic [7:0] next_quad_out;
+    logic [3:0] next_quad_out;
+
+
+    logic [1:0] debug_cs_count =0; 
+
+    //    assign debugA = qspi_clk;
+    assign debugB = debug_cs_count[1];
     
-    assign debug1 = (state == ST_CMD_CAPTURE ) ? 1'b1 : 1'b0; 
-    assign debug2 = (state == ST_READ_4X_DUMMY) ? 1'b1 : 1'b0; 
-        
+//    assign debug1 = (state == ST_CMD_CAPTURE ) ? 1'b1 : 1'b0; 
+    assign debugA = debug_cs_count[0];
+
+
+    // one update per rising edge of CS
+    always_ff @(posedge qspi_cs) begin
+        if (debug_cs_count == 3)
+            debug_cs_count <= 0;
+        else
+            debug_cs_count <= debug_cs_count + 1;
+    end     
+                 
     // When sending, we need to update our outputs on the negedge CLK so they will be ready for the master to sample on the posedge      
     always_ff @(negedge qspi_clk , posedge qspi_cs ) begin 
     
         if ( qspi_cs ) begin
-        
+                            
             // CS deactive, so reset out half of the output enable            
             io0_oe_neg <= 1'b0;
             io1_oe_neg <= 1'b0;
@@ -190,7 +202,8 @@ module top (
             end        
         end     
     end
-        
+    
+                
     // I really want to make a task `load_shift_out( logic val[*] )` here, but I don't know how. Do you?
 
 
@@ -198,6 +211,7 @@ module top (
     always_ff @(posedge qspi_clk, posedge qspi_cs) begin
     
         if (qspi_cs) begin
+        
 
             // If CS not asserted then we reset everything        
             state       <= ST_CMD_CAPTURE;      // Always reset to waiting for a command after CS deassertion. 
@@ -259,7 +273,7 @@ module top (
                             OPCODE_QOFR:  begin
                             
                                 // This command is the master asking us for some data on quad IO lines, but first we need to get rid of the 24 address bits + 8 dummy bits
-                                bit_count <= (3*8) + (8) ;    // 3 address bytes + 8 dummy bits. TODO: We can get rid of the dummies by implementing the capabilities table.                                                               
+                                bit_count <= (3*8) + (8*8) ;    // 3 address bytes + 8 dummy bits. TODO: We can get rid of the dummies by implementing the capabilities table.                                                               
                                 state <= ST_READ_4X_DUMMY;
                                                                         
                             end
