@@ -1,0 +1,115 @@
+/dts-v1/;
+
+#include "imx8mp-verdin.dtsi"
+#include "imx8mp-verdin-nonwifi.dtsi"
+#include "imx8mp-verdin-dahlia.dtsi"
+
+/ {
+	model = "Toradex Verdin iMX8M Plus on Dahlia Board";
+	compatible = "toradex,verdin-imx8mp-nonwifi-dahlia",
+		     "toradex,verdin-imx8mp-nonwifi",
+		     "toradex,verdin-imx8mp",
+		     "fsl,imx8mp";
+};
+
+&i2c2 {
+	status = "disabled";
+};
+
+&i2c3 {
+	status = "disabled";
+};
+
+&usb3_1 {
+	status = "disabled";
+};
+
+&usb3_phy1 {
+	status = "disabled";
+};
+
+&uart2 {
+	status = "disabled";
+};
+
+&iomuxc {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gpio1>,
+		    <&pinctrl_gpio3>,
+		    <&pinctrl_gpio7>, <&pinctrl_gpio8>,
+		    <&pinctrl_gpio_hog1>, <&pinctrl_gpio_hog2>, <&pinctrl_gpio_hog3>;
+
+	pinctrl_ecspi1: ecspi1grp {
+                fsl,pins =
+                        <MX8MP_IOMUXC_ECSPI1_MISO__ECSPI1_MISO          0x1c4>, /* SODIMM 198 */
+                        <MX8MP_IOMUXC_ECSPI1_MOSI__ECSPI1_MOSI          0x4>,   /* SODIMM 200 */
+                        <MX8MP_IOMUXC_ECSPI1_SCLK__ECSPI1_SCLK          0x4>,   /* SODIMM 196 */
+			<MX8MP_IOMUXC_GPIO1_IO06__GPIO1_IO06		0x184>, /* SODIMM 212 */
+			<MX8MP_IOMUXC_GPIO1_IO01__GPIO1_IO01		0x1c4>,	/* SODIMM 208 */
+			<MX8MP_IOMUXC_I2C2_SDA__GPIO5_IO17		0x1c4>,	/* SODIMM 53 */
+			<MX8MP_IOMUXC_I2C2_SCL__GPIO5_IO16		0x1c6>,	/* SODIMM 55 */
+			<MX8MP_IOMUXC_I2C3_SCL__GPIO5_IO18		0x1c6>,	/* SODIMM 95 */
+			<MX8MP_IOMUXC_I2C3_SDA__GPIO5_IO19		0x1c6>;	/* SODIMM 93 */
+        };
+};
+
+&ecspi1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	cs-gpios = <&gpio1 6 GPIO_ACTIVE_LOW>, /* FPGA CS */
+		   <&gpio1 1 GPIO_ACTIVE_LOW>, /* AD7490 CS */
+		   <&gpio5 17 GPIO_ACTIVE_LOW>, /* AD9613-0 CS */
+		   <&gpio5 16 GPIO_ACTIVE_LOW>, /* AD9613-1 CS */
+		   <&gpio5 18 GPIO_ACTIVE_LOW>, /* AD9613-2 CS */
+		   <&gpio5 19 GPIO_ACTIVE_LOW>; /* AD9613-3 CS */
+
+	/* FPGA CS */
+	spidev@0 {
+		/* Use compatible "rohm,dh2228fv" to bind spidev driver */
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+	};
+
+	/* AD7490 CS */
+	spidev@1 {
+		/* Use compatible "rohm,dh2228fv" to bind spidev driver */
+		compatible = "rohm,dh2228fv";
+		reg = <1>;
+		spi-max-frequency = <10000000>;
+	};
+
+	/* AD9613-0 CS */
+	spidev@2 {
+		/* Use compatible "rohm,dh2228fv" to bind spidev driver */
+		compatible = "rohm,dh2228fv";
+		reg = <2>;
+		spi-max-frequency = <10000000>;
+	};
+
+	/* AD9613-1 CS */
+	spidev@3 {
+		/* Use compatible "rohm,dh2228fv" to bind spidev driver */
+		compatible = "rohm,dh2228fv";
+		reg = <3>;
+		spi-max-frequency = <10000000>;
+	};
+
+	/* AD9613-2 CS */
+	spidev@4 {
+		/* Use compatible "rohm,dh2228fv" to bind spidev driver */
+		compatible = "rohm,dh2228fv";
+		reg = <4>;
+		spi-max-frequency = <10000000>;
+	};
+
+	/* AD9613-3 CS */
+	spidev@5 {
+		/* Use compatible "rohm,dh2228fv" to bind spidev driver */
+		compatible = "rohm,dh2228fv";
+		reg = <5>;
+		spi-max-frequency = <10000000>;
+	};
+};

@@ -1,4 +1,4 @@
-# voyant-40mhz-spi
+# voyant-spi-test
 Demo testing ~40Mhz bandwidth SPI from Atrix7 FPGA to i.MX8M ARM.
 
 The purpose of this test is just to see if we have good signal integrity on the Voyant PCB for the `multi_spi_x` traces between the FPGA and the CPU. If yes, then still work to do- but if not then no point perusing this path!
