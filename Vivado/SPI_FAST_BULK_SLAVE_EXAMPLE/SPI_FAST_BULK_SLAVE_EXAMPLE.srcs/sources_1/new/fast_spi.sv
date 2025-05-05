@@ -145,8 +145,8 @@ module top (
     logic tx_flag =1'b0;
     
     //    assign debugA = qspi_clk;
-    assign debugB = (state == ST_SHIFT_TX4 ) ? 1'b1 : 1'b0;
-    assign debugA = (state == ST_READ_4X_DUMMY ) ? 1'b1 : 1'b0;
+    assign debugB = (state == next_quad_out[1] ) ? 1'b1 : 1'b0;
+    assign debugA = (state == ST_SHIFT_TX1 ) ? 1'b1 : 1'b0;
     
     logic [ 3:0] temp_pattern = 0;  
                      
@@ -154,28 +154,14 @@ module top (
     always_ff @(negedge qspi_clk) begin
             
         if ( tx_flag ) begin
-        
-            // TODO: Do not drive the da0 in 1 bit mode. 
-        
+                
             output_enable_neg <= 1'b1;
 
-
-/*             
             io0_out <= next_quad_out[0];
             io1_out <= next_quad_out[1];
             io2_out <= next_quad_out[2];
             io3_out <= next_quad_out[3];
-*/            
-
-            // WARNING 
-            io0_out <= temp_pattern[0];
-            io1_out <= temp_pattern[1];
-            io2_out <= temp_pattern[2];
-            io3_out <= temp_pattern[3];
-            
-            temp_pattern <= temp_pattern + 1; 
-            
-                          
+                                      
         end        
     end
     
@@ -203,7 +189,7 @@ module top (
                 // imedeately tri-state the oouts so other people can use the bus
                 // better to put a `& ~qspi_cs` into the assign? 
                 output_enable_pos <= 1'b0;
-                output_enable_pos <= 1'b0;
+                output_enable_neg <= 1'b0;
                 
                 tx_flag <= 1'b0;
                 quad_tx_mode <= 0'b0; 
@@ -233,9 +219,8 @@ module top (
                                 
                                     // This command is the master asking us for our ID, so we send it.                              
                                     
-                                    // Below is overly ugly becuase we can not access the shift reg directly from the negedge clk always so we get everything ready here 
-                                    // Preload the first bit. Dont care about the other dat pins we are in 1x mode now. 
-                                    next_quad_out[0] <= JEDEC_ID[ $high(JEDEC_ID) ];
+                                    // Preload the first bit. Dont care about the other dat pins we are in 1x mode now. ([1]=MISO) 
+                                    next_quad_out[1] <= JEDEC_ID[ $high(JEDEC_ID) ];
                         
                                     // stuff the rest of the bits into the shift register
                                     shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) -1 : 0]  };
@@ -303,8 +288,12 @@ module top (
                     
                         // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
                         // no count, will keep sending over and over again forever.
-                        next_quad_out <=   shift_out_x1[ $high(shift_out_x1) -: 4 ];
-                        shift_out_x1 <= shift_out_x1 << 4;
+//                       next_quad_out <=   shift_out_x1[ $high(shift_out_x1) -: 4 ];
+//                        shift_out_x1 <= shift_out_x1 << 4;
+                        
+                        next_quad_out <=  bit_count[3:0] ;
+                        bit_count <= bit_count + 1; 
+                        
                         
                     end
                     
