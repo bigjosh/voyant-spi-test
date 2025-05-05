@@ -67,6 +67,8 @@ module top (
 //    localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
     localparam [127:0] DATA_PATTERN    = 128'h01234567_89ABCDEF_FEDCBA98_76543210;
     
+    // Drive all 4 io pins? (Otherwise normal SPI so only drive dat1 = MISO) 
+    logic quad_tx_mode = 0'b1;
     
     // Are we driving pins? Both of these need to be enabled for pins to be output. 
     logic output_enable_pos;
@@ -75,7 +77,7 @@ module top (
     // IO0 
     // in x1 mode, this is MOSI
     logic io0_out;
-    assign qspi_dat0 = (output_enable_pos && output_enable_neg && !qspi_cs ) ? io0_out : 1'bz;
+    assign qspi_dat0 = (output_enable_pos && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io0_out : 1'bz;
     
     wire  io0_in     = qspi_dat0;
 
@@ -88,12 +90,12 @@ module top (
 
     // IO2 ------------------------------------------------------------------
     logic io2_out;
-    assign qspi_dat2 = (output_enable_pos && output_enable_neg && !qspi_cs ) ? io2_out : 1'bz;
+    assign qspi_dat2 = (output_enable_pos && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io2_out : 1'bz;
     wire  io2_in     = qspi_dat2;
 
     // IO3 ------------------------------------------------------------------
     logic io3_out;
-    assign qspi_dat3 = (output_enable_pos && output_enable_neg && !qspi_cs ) ? io3_out : 1'bz;
+    assign qspi_dat3 = (output_enable_pos && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io3_out : 1'bz;
     wire  io3_in     = qspi_dat3;
 
     // ---------------------------------------------------------------------
@@ -141,7 +143,7 @@ module top (
     // close to where those states are enetered. 
     // used in posedge clk to output next bits (also enables the outputs if they are not alreday enabled)
     logic tx_flag =1'b0;
-
+    
     //    assign debugA = qspi_clk;
     assign debugB = (state == ST_SHIFT_TX4 ) ? 1'b1 : 1'b0;
     assign debugA = (state == ST_READ_4X_DUMMY ) ? 1'b1 : 1'b0;
@@ -190,6 +192,7 @@ module top (
                 output_enable_pos <= 1'b0;
                 
                 tx_flag <= 1'b0;
+                quad_tx_mode <= 0'b0; 
               
                 state       <= ST_CMD_CAPTURE;      // Always reset to waiting for a command after CS deassertion.
                 shift_in_x1 <= {shift_in_x1[ $high(shift_in_x1) - 1 :0], io0_in};
@@ -343,6 +346,7 @@ module top (
                             state <= ST_SHIFT_TX4;
                             output_enable_pos <= 1'b1;
                             tx_flag <= 1'b1;
+                            quad_tx_mode <= 1'b1; 
                         
                                                     
                         end else begin
