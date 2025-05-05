@@ -66,29 +66,34 @@ module top (
 */                                                        
 //    localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
     localparam [127:0] DATA_PATTERN    = 128'h01234567_89ABCDEF_FEDCBA98_76543210;
+    
+    
+    // Are we driving pins? Both of these need to be enabled for pins to be output. 
+    logic output_enable_pos;
+    logic output_enable_neg;
 
     // IO0 
     // in x1 mode, this is MOSI
-    logic io0_out, io0_oe_pos, io0_oe_neg;
-    assign qspi_dat0 = (io0_oe_pos & io0_oe_neg) ? io0_out : 1'bz;
+    logic io0_out;
+    assign qspi_dat0 = (output_enable_pos && output_enable_neg ) ? io0_out : 1'bz;
     
     wire  io0_in     = qspi_dat0;
 
     // IO1 
     // in x1 mode this is MISO (an output)
-    logic io1_out, io1_oe_pos, io1_oe_neg;
-    assign qspi_dat1 = (io1_oe_pos & io1_oe_neg) ? io1_out : 1'bz;
+    logic io1_out;
+    assign qspi_dat1 = (output_enable_pos && output_enable_neg ) ? io1_out : 1'bz;
 
     wire  io1_in     = qspi_dat1;
 
     // IO2 ------------------------------------------------------------------
-    logic io2_out, io2_oe_pos, io2_oe_neg;
-    assign qspi_dat2 = (io2_oe_pos & io2_oe_neg) ? io2_out : 1'bz;
+    logic io2_out;
+    assign qspi_dat2 = (output_enable_pos && output_enable_neg ) ? io2_out : 1'bz;
     wire  io2_in     = qspi_dat2;
 
     // IO3 ------------------------------------------------------------------
-    logic io3_out, io3_oe_pos, io3_oe_neg;
-    assign qspi_dat3 = (io3_oe_pos & io3_oe_neg) ? io3_out : 1'bz;
+    logic io3_out;
+    assign qspi_dat3 = (output_enable_pos && output_enable_neg ) ? io3_out : 1'bz;
     wire  io3_in     = qspi_dat3;
 
     // ---------------------------------------------------------------------
@@ -103,7 +108,7 @@ module top (
         ST_DEAD          = 3'd7    // Do nothing, wait for a CS reset 
     } state_t;
 
-    state_t state;
+    state_t state = ST_CMD_CAPTURE;
         
            
     // Whatever is in here goes out the door when in ST_SHIFT_OUT
@@ -115,7 +120,7 @@ module top (
     // A define becuase I don't think a task or function can take
     // I know this is ugly, but I don't know a better way to pass a (compile-time) variable len packed array. Do you? 
     
-    `define STUFF_INTO_SHIFT_OUT(x) shift_out_x1[ $high(shift_out_x1) -: $bits(x) ] <= x; bit_count <= $bits(x); io1_oe_pos <= 1'b1 
+    //`define STUFF_INTO_SHIFT_OUT(x) shift_out_x1[ $high(shift_out_x1) -: $bits(x) ] <= x; bit_count <= $bits(x); io1_oe_pos <= 1'b1 
         
     // Incoming command byte
     logic [7:0] shift_in_x1;
@@ -124,108 +129,74 @@ module top (
     // a bit_counter, means didfferent things in different states
     // In ST_CMD_CAPTURE: This is number of command bits in shift_in_x1 so far (<8)  
     // In ST_READ_Xx_DUMMY: This is the number of dummy bits to read before switching to READ state 
-    logic [7:0] bit_count;         // How many bits in shift_in_x1 so far?
-    
-    // Written to by posedge clk, read by negedge clk
-    // we need this becuase the master reads MISO on the posedge
-    logic next_bit_out;
-    
+    logic [7:0] bit_count = 0;         // How many bits in shift so far?
+        
     // Written to by posedge clk, read by negedge clk
     // we need this becuase the master reads MISO on the posedge
     // TODO: This could be smaller (and could overflow). What is the right way to allocate this size?    
     logic [3:0] next_quad_out;
+    
+    // Are we currently transmitting?
+    // This just makes it so we don't need to keep track of which states are transmit states here. Better to know that 
+    // close to where those states are enetered. 
+    // used in posedge clk to output next bits (also enables the outputs if they are not alreday enabled)
+    logic tx_flag =1'b0;
 
-
-    logic [1:0] debug_cs_count =0; 
 
     //    assign debugA = qspi_clk;
-    assign debugB = debug_cs_count[1];
+    assign debugA = tx_flag;
+    assign debugB = (state == ST_READ_4X_DUMMY ) ? 1'b1 : 1'b0;
     
-//    assign debug1 = (state == ST_CMD_CAPTURE ) ? 1'b1 : 1'b0; 
-    assign debugA = debug_cs_count[0];
-
-
-    // one update per rising edge of CS
-    always_ff @(posedge qspi_cs) begin
-        if (debug_cs_count == 3)
-            debug_cs_count <= 0;
-        else
-            debug_cs_count <= debug_cs_count + 1;
-    end     
                  
     // When sending, we need to update our outputs on the negedge CLK so they will be ready for the master to sample on the posedge      
-    always_ff @(negedge qspi_clk , posedge qspi_cs ) begin 
+    always_ff @(negedge qspi_clk ,  posedge qspi_cs ) begin
     
-        if ( qspi_cs ) begin
+        if (qspi_cs) begin 
+            
+            // We got deselected. 
+            
+            output_enable_neg <= 0; 
+                         
+    
+        end else begin
                             
-            // CS deactive, so reset out half of the output enable            
-            io0_oe_neg <= 1'b0;
-            io1_oe_neg <= 1'b0;
-            io2_oe_neg <= 1'b0;
-            io3_oe_neg <= 1'b0;
-            
-        end else begin 
-        
             // CS active 
-    
-            if (state == ST_SHIFT_TX1) begin
             
-                // Our only job here is to get the next bit onto the pin on the negedge clk
-                // everything else happens on the posedge to keep it in the same clk domain.
-                 
-                io1_out <= next_bit_out;
-                io1_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set  
-                
-            end else if (state == ST_SHIFT_TX4 ) begin 
-
-                // Our only job here is to get the next bit onto the pin on the negedge clk
-                // everything else happens on the posedge to keep it in the same clk domain.
+            if ( tx_flag ) begin
+            
+                // TODO: Do not drive the da0 in 1 bit mode. 
+            
+                output_enable_neg <= 1'b1;
                  
                 io0_out <= next_quad_out[0];
                 io1_out <= next_quad_out[1];
                 io2_out <= next_quad_out[2];
                 io3_out <= next_quad_out[3];
-
-                io0_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set
-                io1_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set
-                io2_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set
-                io3_oe_neg <= 1'b1;                                     // Enable output on MOSI. Only matters on the 1st bit out the gate when we first enter this state, other passes will already be set
-                  
-            end else begin
-            
-                // Any non-transmit state? disable our half of the output enable. 
-                io0_oe_neg <= 1'b0;
-                io1_oe_neg <= 1'b0;
-                io2_oe_neg <= 1'b0;
-                io3_oe_neg <= 1'b0;
-                            
-            end        
+                              
+            end
         end     
     end
     
-                
-    // I really want to make a task `load_shift_out( logic val[*] )` here, but I don't know how. Do you?
-
-
-    // Main logic            
-    always_ff @(posedge qspi_clk, posedge qspi_cs) begin
+    logic powerup_flag = 1'b1; 
     
-        if (qspi_cs) begin
+    // Main logic            
+    always_ff @(posedge qspi_clk , posedge qspi_cs ) begin
+    
+        if (qspi_cs || powerup_flag ) begin
         
-
-            // If CS not asserted then we reset everything        
-            state       <= ST_CMD_CAPTURE;      // Always reset to waiting for a command after CS deassertion. 
-            bit_count     <= '0;                  // bits rx so far
+            // CS high so we have been deselected. we need to reset everything and get red for next trasnaction.
+                
+            // imedeately tri-state the oouts so other people can use the bus
+            // better to put a `& ~qspi_cs` into the assign? 
+            output_enable_pos <= 1'b0;
+            tx_flag <= 1'b0;                    
+            state       <= ST_CMD_CAPTURE;      // Always reset to waiting for a command after CS deassertion.
+            bit_count   <= 0;
+            powerup_flag <= 1'b0;
             
-            // All outputs high-Z
-            io0_oe_pos <= 0; 
-            io1_oe_pos <= 0; 
-            io2_oe_pos <= 0; 
-            io3_oe_pos <= 0;
-            
-        end else begin
-        
-            // CS is asserted
+        end else begin                                                  
+                 
+            // CS is asserted and we are already actively doing stuff since the last negedge cs
         
             case (state)
 
@@ -244,28 +215,25 @@ module top (
                             
                                 // This command is the master asking us for our ID, so we send it.                              
                                 
-                                // BElow is overly ugly becuase we can not access the shift reg directly from the negedge clk always so we get everything ready here 
-                                // Preload the first bit
-                                next_bit_out = JEDEC_ID[ $high(JEDEC_ID) ];
+                                // Below is overly ugly becuase we can not access the shift reg directly from the negedge clk always so we get everything ready here 
+                                // Preload the first bit. Dont care about the other dat pins we are in 1x mode now. 
+                                next_quad_out[0] <= JEDEC_ID[ $high(JEDEC_ID) ];
                     
                                 // stuff the rest of the bits into the shift register
                                 shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) -1 : 0]  };
                                 
-                                // Enable our half of the output enable. The negedge clk will enable the other half and then the pin will be output
-                                io1_oe_pos <= 1'b1;
-                                                                                                        
-                                // switch to sending mode
+                                // switch to sending mode. We will send this bit and enable the outputs on next negedge clk
                                 state <= ST_SHIFT_TX1;
+                                tx_flag <= 1'b1;                    
                                 
-                                // Note that we do not actually put the bit on the pin, and we do not set the pin for output,
-                                // those happen in the always posedge clk abvove.  
-                                        
+                                output_enable_pos <= 1'b1;
+                                                                        
                             end
                             
                             OPCODE_READ:  begin
                             
                                 // This command is the master asking us for some data, but first we need to get rid of the 24 address bits.
-                                bit_count <= 24 ;                                                              
+                                bit_count <= 24 ;               // ignore 3 address bytes                                                          
                                 state <= ST_READ_1X_DUMMY;
                                                                         
                             end
@@ -273,21 +241,26 @@ module top (
                             OPCODE_QOFR:  begin
                             
                                 // This command is the master asking us for some data on quad IO lines, but first we need to get rid of the 24 address bits + 8 dummy bits
-                                bit_count <= (3*8) + (8*8) ;    // 3 address bytes + 8 dummy bits. TODO: We can get rid of the dummies by implementing the capabilities table.                                                               
+                                bit_count <= (3*8) + (8) ;    // 3 address bytes + 8 dummy bits. TODO: We can get rid of the dummies by implementing the capabilities table.                                                               
                                 state <= ST_READ_4X_DUMMY;
                                                                         
                             end
-                            
-                            
+                                                        
                             
     //                        OPCODE_QOFR:      state <= ST_QOFR_ADDR;
-                            default:          state <= ST_DEAD; // Unsupported op, go dead wait for next CS reset
+                            default: begin
                             
-                        endcase
-  
-  
-                                                             
+                              state <= ST_DEAD; // Unsupported op, go dead wait for next CS reset
+                              tx_flag <= 1'b0;
+                              output_enable_pos <= 1'b0;
+                              
+                            end
+                                                         
+                        endcase // command recieved (if we fall though this case then the command is ignored. 
+                                                                 
                      end else begin // else if (bit_count == 3'd7) begin 
+                     
+                        // Keep reading/shifting in current command
                                           
                         shift_in_x1 <= {shift_in_x1[ $high(shift_in_x1) - 1 :0], io0_in};
                         bit_count   <= bit_count + 1;
@@ -302,8 +275,9 @@ module top (
                 
                     // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
                     // no count, will keep sending over and over again forever.
-                    next_bit_out =   shift_out_x1[ $high(shift_out_x1) ];
+                    next_quad_out[1] <=   shift_out_x1[ $high(shift_out_x1) ];
                     shift_out_x1 <= shift_out_x1 << 1;
+                    
                     
                 end
                 
@@ -311,7 +285,7 @@ module top (
                 
                     // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
                     // no count, will keep sending over and over again forever.
-                    next_quad_out =   shift_out_x1[ $high(shift_out_x1) -: 4 ];
+                    next_quad_out <=   shift_out_x1[ $high(shift_out_x1) -: 4 ];
                     shift_out_x1 <= shift_out_x1 << 4;
                     
                 end
@@ -328,17 +302,16 @@ module top (
                         // TODO: THIS SHOULD BE MACRO
                         
                         // Preload the first bit
-                        next_bit_out =   DATA_PATTERN[ $high(DATA_PATTERN) ];
+                        next_quad_out[0] <=   DATA_PATTERN[ $high(DATA_PATTERN) ];
                 
                         // stuff the rest of the bits into the shift register                                                      
                         shift_out_x1[ $high(shift_out_x1) -: ($bits(DATA_PATTERN)-1) ] <= { DATA_PATTERN[ $high( DATA_PATTERN ) -1 : 0]  };
                         
-                        // Enable our half of the output enable. The negedge clk will enable the other half and then the pin will be output
-                        io1_oe_pos <= 1'b1;
-                                                                                                
-                        // switch to sending mode
+                        // switch to sending mode. the posedge clk will see this state and enable output and send the bits
                         state <= ST_SHIFT_TX1;
-                                                
+                        output_enable_pos <= 1'b1;
+                        tx_flag <= 1'b1;
+                                                                        
                     end else begin
                     
                         bit_count <= bit_count - 1;
@@ -360,19 +333,16 @@ module top (
                         // TODO: THIS SHOULD BE MACRO
                         
                         // Preload the 4 bits
-                        next_quad_out =   DATA_PATTERN[ $high(DATA_PATTERN) -: 4 ];
+                        next_quad_out <=   DATA_PATTERN[ $high(DATA_PATTERN) -: 4 ];
                 
                         // stuff the rest of the bits into the shift register                                                      
                         shift_out_x1[ $high(shift_out_x1) -: ($bits(DATA_PATTERN)-4) ] <= { DATA_PATTERN[ $high( DATA_PATTERN ) -4 : 0]  };
                         
-                        // Enable our half of the output enable. The negedge clk will enable the other half and then the pin will be output
-                        io0_oe_pos <= 1'b1;
-                        io1_oe_pos <= 1'b1;
-                        io2_oe_pos <= 1'b1;
-                        io3_oe_pos <= 1'b1;
-                                                                                                
-                        // switch to sending mode
+                        // switch to sending mode. the posedge clk will see this state and enable output and send the nibbles
                         state <= ST_SHIFT_TX4;
+                        output_enable_pos <= 1'b1;
+                        tx_flag <= 1'b1;
+                    
                                                 
                     end else begin
                     
