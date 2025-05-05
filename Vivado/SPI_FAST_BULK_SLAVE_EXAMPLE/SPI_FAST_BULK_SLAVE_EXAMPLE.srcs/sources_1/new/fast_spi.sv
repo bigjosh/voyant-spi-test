@@ -147,6 +147,8 @@ module top (
     //    assign debugA = qspi_clk;
     assign debugB = (state == ST_SHIFT_TX4 ) ? 1'b1 : 1'b0;
     assign debugA = (state == ST_READ_4X_DUMMY ) ? 1'b1 : 1'b0;
+    
+    logic [ 3:0] temp_pattern = 0;  
                      
     // When sending, we need to update our outputs on the negedge CLK so they will be ready for the master to sample on the posedge      
     always_ff @(negedge qspi_clk) begin
@@ -156,11 +158,23 @@ module top (
             // TODO: Do not drive the da0 in 1 bit mode. 
         
             output_enable_neg <= 1'b1;
-             
+
+
+/*             
             io0_out <= next_quad_out[0];
             io1_out <= next_quad_out[1];
             io2_out <= next_quad_out[2];
             io3_out <= next_quad_out[3];
+*/            
+
+            // WARNING 
+            io0_out <= temp_pattern[0];
+            io1_out <= temp_pattern[1];
+            io2_out <= temp_pattern[2];
+            io3_out <= temp_pattern[3];
+            
+            temp_pattern <= temp_pattern + 1; 
+            
                           
         end        
     end
