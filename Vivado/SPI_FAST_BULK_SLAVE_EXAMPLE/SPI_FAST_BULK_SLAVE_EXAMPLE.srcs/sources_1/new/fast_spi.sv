@@ -41,6 +41,53 @@ module top (
     // Build a test packet with a sequence number and some easy to eyeball interesting data. 
 
 
+function automatic packet_t build_packet (input  u32_t seq);
+
+    // Local working copy
+    packet_t pkt;
+    u32_t     tmp;
+
+    // 0--6  : easy-to-spot markers
+    pkt[0] = MAGIC_COOKIE;                    // "LiDR"
+    pkt[1] = seq;                             // sequence #
+    pkt[2] = ~seq;                            // bitwise inverse
+    pkt[3] = 32'hCAFE_BABE;
+    pkt[4] = 32'hDEAD_BEEF;
+    pkt[5] = 1 << (seq & 5'h1F);              // rotating one-hot
+    pkt[6] = ~(pkt[5]);                       // rotating zero-hot
+
+    // 7--14 : walking-1 (rotates one bit every packet)
+    for (int i = 0; i < 8; i++) begin
+        pkt[7+i] = 32'h0000_0001 << ((seq+i) & 5'h1F);
+    end
+
+    // 15--22: eight LFSR iterations (x^32 + x^22 + x^2 + x + 1)
+    tmp = {seq, ~seq};                        // simple 32-bit seed
+    for (int i = 0; i < 8; i++) begin
+        tmp       = {tmp[30:0],
+                     tmp[31] ^ tmp[21] ^ tmp[1] ^ tmp[0]};
+        pkt[15+i] = tmp;
+    end
+
+/*
+    // 23--30: byte-swapped "pretty" constants
+    const u32_t nice[8] = '{
+        32'h0123_4567, 32'h7654_3210,
+        32'h89AB_CDEF, 32'hFEDC_BA98,
+        32'h1357_9BDF, 32'hFDB9_7531,
+        32'h0F0F_0F0F, 32'hF0F0_F0F0
+    };
+    for (int i = 0; i < 8; i++) pkt[23+i] = nice[i];
+
+    // 31 : XOR checksum of previous 31 words
+    u32_t csum = 32'h0;
+    for (int i = 0; i < 31; i++) csum ^= pkt[i];
+    pkt[31] = csum;
+*/
+    return pkt;
+endfunction
+
+
 /*    
     function automatic packet_t build_packet (input u32_t seq);
 
@@ -75,7 +122,6 @@ module top (
     
     // OP codes for the above chip (also from datasheet)    
     localparam [7:0]  OPCODE_READ_ID    = 8'h9F;          // Read 24 bit device ID block
-    localparam [7:0]  OPCODE_READ       = 8'h03;          // Read with address (default 24 bit address)
     localparam [7:0]  OPCODE_QOFR       = 8'h6B;          // Quad Output Fast Read
               
 /*
@@ -94,7 +140,7 @@ module top (
 //    localparam [63:0] DATA_PATTERN    = 64'hFFEEDDCC_BBAA9988;
 //    localparam [127:0] DATA_PATTERN    = 127'h00112233_44556677_8899AABB_CCDDEEFF;
     
-    localparam [191:0] DATA_PATTERN    = 192'h01234567_89ABCDEF_FEDCBA98_76543210_CAFEBABE_DEADBEEF;
+    localparam [255:0] DATA_PATTERN    = 256'h01234567_89ABCDEF_FEDCBA98_76543210_FFFFFFFF_00000000_CAFEBABE_DEADBEEF;
     
     // Drive all 4 io pins? (Otherwise normal SPI so only drive dat1 = MISO) 
     logic quad_tx_mode = 1'b1;
@@ -126,7 +172,6 @@ module top (
         ST_CMD_CAPTURE   = 3'd1,   // Shifting in 8-bit op-code (this is default idle state)
         ST_SHIFT_TX1     = 3'd2,   // Shifting out what ever is in shift_out on dat1 forever
         ST_SHIFT_TX4     = 3'd3,   // Shifting out what ever is in shift_out on dat[0:3] forever                        
-        ST_READ_1X_DUMMY = 3'd4,   // Discard how ever many clocks are in bit_count then go to ST_SHIFT_TX1 (used for consuming address bits on read)
         ST_READ_4X_DUMMY = 3'd5,   // Discard how ever many clocks are in bit_count then go to ST_SHIFT_TX4 (used for consuming address bits on read)
         ST_DEAD          = 3'd7    // Do nothing, wait for a CS reset 
     } state_t;
@@ -266,15 +311,7 @@ module top (
                                     output_enable_pos <= 1'b1;
                                                                             
                                 end
-                                
-                                OPCODE_READ:  begin
-                                
-                                    // This command is the master asking us for some data, but first we need to get rid of the 24 address bits.
-                                    bit_count <= 24 ;               // ignore 3 address bytes                                                          
-                                    state <= ST_READ_1X_DUMMY;
-                                                                            
-                                end
-                                
+                                                                
                                 OPCODE_QOFR:  begin
                                 
                                     // This command is the master asking us for some data on quad IO lines, but first we need to get rid of the 24 address bits + 8 dummy bits
@@ -293,7 +330,7 @@ module top (
                                     //shift_out[ $high( shift_out) :  $high( shift_out) - $high( packet_t ) ]  <= build_packet( seq );
                                     //shift_out <=   build_packet( seq );
                                     
-                                    shift_out[$high(shift_out) -: $bits(DATA_PATTERN)] <= DATA_PATTERN ; //build_packet(seq);                                    
+                                    shift_out[$high(shift_out) -: $bits(DATA_PATTERN)] <= DATA_PATTERN  ; //build_packet(seq);                                    
                                     
                                     seq <= seq + 1;  
                                                                             
@@ -336,36 +373,6 @@ module top (
                     end
                                         
                     
-                    ST_READ_1X_DUMMY: begin
-                    
-                        if (bit_count == 1 ) begin
-                        
-                            // we test for 1 rather than 0 becuase we are on the rising edge of the clk, so cnt not updated yet
-                        
-                            // We are done reading the address bits, so start sending the data!
-                                                    
-                            // TODO: THIS SHOULD BE MACRO
-                            
-                            // Preload the first bit
-                            next_quad_out[0] <=   DATA_PATTERN[ $high(DATA_PATTERN) ];
-                    
-                            // stuff the rest of the bits into the shift register
-                            // TODO                                                      
-                            // shift_out[ $high(shift_out) -: ($bits(DATA_PATTERN)-1) ] <= { DATA_PATTERN[ $high( DATA_PATTERN ) -1 : 0]  };
-                            
-                            // switch to sending mode. the posedge clk will see this state and enable output and send the bits
-                            state <= ST_SHIFT_TX1;
-                            output_enable_pos <= 1'b1;
-                            tx_flag <= 1'b1;
-                                                                            
-                        end else begin
-                        
-                            bit_count <= bit_count - 1;
-                            
-                        end //  if (bit_count == 1 ) begin
-                                                            
-                    end // ST_READ_1X_DUMMY
-                    
                     ST_READ_4X_DUMMY: begin
                     
                         // This is the same as ST_READ_1X_DUMMY, except that when the count is done it will load 4 bits into io_ou[0:3] and then jump to state ST_SHIFT_TX4
@@ -403,9 +410,6 @@ module top (
 //                      next_quad_out <=  shift_out[ $high(shift_out) -: 4 ];
                         
                         next_quad_out <=  shift_out[ $high(shift_out) -: 4  ];
-                        
-                        // TODO: For now we stuff magic 0101 in so we cna see it come out, but probably better to use 00?
-                        //shift_out  <= { shift_out[ ($high(shift_out) - 4 ) : 0  ] , 4'b1010 } ;
                         
                         shift_out <= shift_out << 4;                                                                    
                         
