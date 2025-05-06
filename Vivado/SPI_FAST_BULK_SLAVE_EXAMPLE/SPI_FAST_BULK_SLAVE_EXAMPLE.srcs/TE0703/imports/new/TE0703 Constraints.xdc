@@ -39,7 +39,7 @@ set_property PACKAGE_PIN    H17         [get_ports {qspi_dat2}]
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat2}]
 
 # J2-A9
-set_property PACKAGE_PIN    H13         [get_ports {qspi_dat3}]     
+set_property PACKAGE_PIN    H18         [get_ports {qspi_dat3}]     
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_dat3}]
 
 
