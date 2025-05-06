@@ -28,6 +28,41 @@ module top (
     
 );
 
+   
+   typedef logic [ 31:0 ] u32_t; 
+   
+    parameter int BITS_PER_WORD        = 32;
+    parameter int WORDS_PER_PACKET     = 32;
+    
+    typedef logic [ WORDS_PER_PACKET-1 : 0 ][BITS_PER_WORD-1:0]  packet_t  ; 
+                                  
+    localparam [31:0] MAGIC_COOKIE = "LiDR";        // 0x4c694452
+
+    // Build a test packet with a sequence number and some easy to eyeball interesting data. 
+
+
+/*    
+    function automatic packet_t build_packet (input u32_t seq);
+
+       return {        
+           
+            MAGIC_COOKIE,
+            seq,
+            32'hCAFE_BABE,
+            ~seq,
+            32'hDEAD_BEEF,
+            1 << (seq % 32 ),
+            32'h5555_5555,
+            ~(1 << (seq % 32 )),
+            32'hAAAA_AAAA,
+            32'h0123_4567,
+            32'h890a_bcde,
+            32'h0000_0000,
+            32'hffff_ffff
+        }; 
+        
+    endfunction        
+*/    
         
     // This is sent to the master when it issues OPCODE_READ_ID
     // Taken from datasheet page 34 
@@ -57,9 +92,9 @@ module top (
 */                                                        
 //    localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
 //    localparam [63:0] DATA_PATTERN    = 64'hFFEEDDCC_BBAA9988;
-    localparam [127:0] DATA_PATTERN    = 127'h00112233_44556677_8899AABB_CCDDEEFF;
+//    localparam [127:0] DATA_PATTERN    = 127'h00112233_44556677_8899AABB_CCDDEEFF;
     
-    //localparam [191:0] DATA_PATTERN    = 192'h01234567_89ABCDEF_FEDCBA98_76543210_CAFEBABE_DEADBEEF;
+    localparam [191:0] DATA_PATTERN    = 192'h01234567_89ABCDEF_FEDCBA98_76543210_CAFEBABE_DEADBEEF;
     
     // Drive all 4 io pins? (Otherwise normal SPI so only drive dat1 = MISO) 
     logic quad_tx_mode = 1'b1;
@@ -103,11 +138,10 @@ module top (
     /// than we have, we mind as well send 0's, right?
     // sinlge bit SPI
     
-    // Be ready for 32 words, 32 bits each per packet. 
-    //logic [ (32*32)-1 :0] shift_out;
-    // TODO
-    //logic [ 63 :0] shift_out = 64'hCAFEBABE_DEADBEEF;
+    // Be ready for 32 words, 32 bits each per packet. Could be bigger if we want a header? 
     logic [ 1023 :0] shift_out ; //= 64'h11223344_55667788;
+    
+    
     
     
     // A define becuase I don't think a task or function can take
@@ -165,6 +199,8 @@ module top (
     assign shift_in_x1_next = {shift_in_x1[ ($high( shift_in_x1)-1):0], qspi_dat0};    
         
     logic posedge_cs_detected = 1'b1; 
+    
+    u32_t seq = 0;
     
     // Main logic            
     always_ff @(posedge qspi_clk or posedge qspi_cs) begin
@@ -244,6 +280,22 @@ module top (
                                     // This command is the master asking us for some data on quad IO lines, but first we need to get rid of the 24 address bits + 8 dummy bits
                                     bit_count <= (3*8) + (8) ;    // 3 address bytes + 8 dummy cycles. TODO: We can get rid of the dummies by implementing the capabilities table.                                                               
                                     state <= ST_READ_4X_DUMMY;
+                                    
+                                    // Also since we are here, lets load up the shift register with the packet to go out.
+                                    // this way it will be ready when we switch to tx mode
+                                    // This should also give us a compile time error if the shift_out is not wide enough for a single packet
+                                    
+                                    
+                                    // Yikes, the line below gets an error! Why?!?!? 
+                                    // [Synth 8-524] part-select [1023:-1024] out of range of prefix 'shift_out'
+                                    //shift_out[ $high( shift_out) :- $bits( packet_t ) ]  <= build_packet( seq );
+                                    
+                                    //shift_out[ $high( shift_out) :  $high( shift_out) - $high( packet_t ) ]  <= build_packet( seq );
+                                    //shift_out <=   build_packet( seq );
+                                    
+                                    shift_out[$high(shift_out) -: $bits(DATA_PATTERN)] <= DATA_PATTERN ; //build_packet(seq);                                    
+                                    
+                                    seq <= seq + 1;  
                                                                             
                                 end
                                                             
@@ -326,13 +378,10 @@ module top (
                                                     
                             // TODO: THIS SHOULD BE MACRO
                             
-                            // Preload the 4 bits
-                            // TODO
-                            next_quad_out <= DATA_PATTERN[ $high(DATA_PATTERN) -: 4 ];
-                    
-                            // stuff the rest of the bits into the shift register                                                      
-                            shift_out[ $high(shift_out) -: ($bits(DATA_PATTERN)-4) ] <= { DATA_PATTERN[ $high( DATA_PATTERN ) - 4 : 0]  };
-                            
+                            // Preload the first 4 bits so we are ready for the first falling edge. 
+                            next_quad_out <= shift_out[ $high(shift_out) -: 4  ];
+                            shift_out <= shift_out << 4;                                 
+                                                
                             // switch to sending mode. the posedge clk will see this state and enable output and send the nibbles
                             state <= ST_SHIFT_TX4;
                             output_enable_pos <= 1'b1;
