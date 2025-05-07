@@ -34,13 +34,14 @@ module top (
     parameter int BITS_PER_WORD        = 32;
     parameter int WORDS_PER_PACKET     = 32;
     
-    typedef logic [ WORDS_PER_PACKET-1 : 0 ][BITS_PER_WORD-1:0]  packet_t  ; 
+    // This is Wierd. We put word index 0 first so it going out the wire first, but we put bit index 0 last so all numbers are MSB first. 
+    typedef logic [ 0 : WORDS_PER_PACKET-1 ][BITS_PER_WORD-1:0]  packet_t  ; 
                                   
     localparam [31:0] MAGIC_COOKIE = "LiDR";        // 0x4c694452
 
     // Build a test packet with a sequence number and some easy to eyeball interesting data. 
 
-
+/*
 function automatic packet_t build_packet (input  u32_t seq);
 
     // Local working copy
@@ -69,7 +70,6 @@ function automatic packet_t build_packet (input  u32_t seq);
         pkt[15+i] = tmp;
     end
 
-/*
     // 23--30: byte-swapped "pretty" constants
     const u32_t nice[8] = '{
         32'h0123_4567, 32'h7654_3210,
@@ -83,7 +83,24 @@ function automatic packet_t build_packet (input  u32_t seq);
     u32_t csum = 32'h0;
     for (int i = 0; i < 31; i++) csum ^= pkt[i];
     pkt[31] = csum;
+    
+    return pkt;
+endfunction
 */
+
+
+function automatic packet_t build_packet (input  u32_t seq);
+
+    // Local working copy
+    packet_t pkt;
+    
+    for (int i = 0; i < 32; i++) begin
+        logic [3:0] nibble;
+        nibble = i[3:0];
+        //u32_t i32= { nibble , nibble , nibble , nibble , nibble , nibble , nibble , nibble }; 
+        pkt[i][31:0] = { nibble , nibble , nibble , nibble , nibble , nibble , nibble , nibble } ; 
+    end    
+    
     return pkt;
 endfunction
 
@@ -241,7 +258,7 @@ endfunction
     
     // Define a combinational signal for to peek the next shift-in value since it is used multipule times below
     logic [$high(shift_in_x1) :0] shift_in_x1_next;
-    assign shift_in_x1_next = {shift_in_x1[ ($high( shift_in_x1)-1):0], qspi_dat0};    
+    assign shift_in_x1_next = {shift_in_x1[ ($high( shift_in_x1)-1):0], qspi_dat0};
         
     logic posedge_cs_detected = 1'b1; 
     
@@ -330,8 +347,41 @@ endfunction
                                     //shift_out[ $high( shift_out) :  $high( shift_out) - $high( packet_t ) ]  <= build_packet( seq );
                                     //shift_out <=   build_packet( seq );
                                     
-                                    shift_out[$high(shift_out) -: $bits(DATA_PATTERN)] <= DATA_PATTERN  ; //build_packet(seq);                                    
+                                    // shift_out[$high(shift_out) -: $bits(packet_t)] <= build_packet(seq);                                    
                                     
+                                    shift_out[ (1023 -  0*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 -  1*32 ) -: 32 ] <= 32'hffffffff ;
+                                    shift_out[ (1023 -  2*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 -  3*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 -  4*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 -  5*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 -  6*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 -  7*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 -  8*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 -  9*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 10*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 11*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 12*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 13*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 14*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 15*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 16*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 17*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 18*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 19*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 20*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 21*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 22*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 23*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 24*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 25*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 26*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 27*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 28*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 29*32 ) -: 32 ] <= 32'h11111111 ;
+                                    shift_out[ (1023 - 30*32 ) -: 32 ] <= 32'hffffffff ;
+                                    shift_out[ (1023 - 31*32 ) -: 32 ] <= 32'h11111111 ;
+                                                                                                            
                                     seq <= seq + 1;  
                                                                             
                                 end
@@ -411,7 +461,7 @@ endfunction
                         
                         next_quad_out <=  shift_out[ $high(shift_out) -: 4  ];
                         
-                        shift_out <= shift_out << 4;                                                                    
+                        shift_out <= { shift_out[ $high(shift_out) - 4 : 0 ] , 4'b0000 };                                                
                         
                     end  // ST_SHIFT_TX4: 
                             
