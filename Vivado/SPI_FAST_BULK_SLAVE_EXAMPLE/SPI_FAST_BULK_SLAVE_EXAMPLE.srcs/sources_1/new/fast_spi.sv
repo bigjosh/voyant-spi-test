@@ -35,98 +35,7 @@ module top (
     parameter int WORDS_PER_PACKET     = 32;
     
     // This is Wierd. We put word index 0 first so it going out the wire first, but we put bit index 0 last so all numbers are MSB first. 
-    typedef logic [ 0 : WORDS_PER_PACKET-1 ][BITS_PER_WORD-1:0]  packet_t  ; 
-                                  
-    localparam [31:0] MAGIC_COOKIE = "LiDR";        // 0x4c694452
-
-    // Build a test packet with a sequence number and some easy to eyeball interesting data. 
-
-/*
-function automatic packet_t build_packet (input  u32_t seq);
-
-    // Local working copy
-    packet_t pkt;
-    u32_t     tmp;
-
-    // 0--6  : easy-to-spot markers
-    pkt[0] = MAGIC_COOKIE;                    // "LiDR"
-    pkt[1] = seq;                             // sequence #
-    pkt[2] = ~seq;                            // bitwise inverse
-    pkt[3] = 32'hCAFE_BABE;
-    pkt[4] = 32'hDEAD_BEEF;
-    pkt[5] = 1 << (seq & 5'h1F);              // rotating one-hot
-    pkt[6] = ~(pkt[5]);                       // rotating zero-hot
-
-    // 7--14 : walking-1 (rotates one bit every packet)
-    for (int i = 0; i < 8; i++) begin
-        pkt[7+i] = 32'h0000_0001 << ((seq+i) & 5'h1F);
-    end
-
-    // 15--22: eight LFSR iterations (x^32 + x^22 + x^2 + x + 1)
-    tmp = {seq, ~seq};                        // simple 32-bit seed
-    for (int i = 0; i < 8; i++) begin
-        tmp       = {tmp[30:0],
-                     tmp[31] ^ tmp[21] ^ tmp[1] ^ tmp[0]};
-        pkt[15+i] = tmp;
-    end
-
-    // 23--30: byte-swapped "pretty" constants
-    const u32_t nice[8] = '{
-        32'h0123_4567, 32'h7654_3210,
-        32'h89AB_CDEF, 32'hFEDC_BA98,
-        32'h1357_9BDF, 32'hFDB9_7531,
-        32'h0F0F_0F0F, 32'hF0F0_F0F0
-    };
-    for (int i = 0; i < 8; i++) pkt[23+i] = nice[i];
-
-    // 31 : XOR checksum of previous 31 words
-    u32_t csum = 32'h0;
-    for (int i = 0; i < 31; i++) csum ^= pkt[i];
-    pkt[31] = csum;
-    
-    return pkt;
-endfunction
-*/
-
-
-function automatic packet_t build_packet (input  u32_t seq);
-
-    // Local working copy
-    packet_t pkt;
-    
-    for (int i = 0; i < 32; i++) begin
-        logic [3:0] nibble;
-        nibble = i[3:0];
-        //u32_t i32= { nibble , nibble , nibble , nibble , nibble , nibble , nibble , nibble }; 
-        pkt[i][31:0] = { nibble , nibble , nibble , nibble , nibble , nibble , nibble , nibble } ; 
-    end    
-    
-    return pkt;
-endfunction
-
-
-/*    
-    function automatic packet_t build_packet (input u32_t seq);
-
-       return {        
-           
-            MAGIC_COOKIE,
-            seq,
-            32'hCAFE_BABE,
-            ~seq,
-            32'hDEAD_BEEF,
-            1 << (seq % 32 ),
-            32'h5555_5555,
-            ~(1 << (seq % 32 )),
-            32'hAAAA_AAAA,
-            32'h0123_4567,
-            32'h890a_bcde,
-            32'h0000_0000,
-            32'hffff_ffff
-        }; 
-        
-    endfunction        
-*/    
+    typedef logic [ 0 : WORDS_PER_PACKET-1 ][BITS_PER_WORD-1:0]  packet_t  ;                                   
         
     // This is sent to the master when it issues OPCODE_READ_ID
     // Taken from datasheet page 34 
@@ -152,12 +61,7 @@ endfunction
         8'h00    // Num bytes remaing in this ID (non-standard) 
     };  
         
-*/                                                        
-//    localparam [63:0] DATA_PATTERN    = 64'hCAFEBABE_DEADBEEF;
-//    localparam [63:0] DATA_PATTERN    = 64'hFFEEDDCC_BBAA9988;
-//    localparam [127:0] DATA_PATTERN    = 127'h00112233_44556677_8899AABB_CCDDEEFF;
-    
-    localparam [255:0] DATA_PATTERN    = 256'h01234567_89ABCDEF_FEDCBA98_76543210_FFFFFFFF_00000000_CAFEBABE_DEADBEEF;
+*/                                                            
     
     // Drive all 4 io pins? (Otherwise normal SPI so only drive dat1 = MISO) 
     logic quad_tx_mode = 1'b1;
@@ -187,42 +91,41 @@ endfunction
     // TODO: Take out 1bit read stuff? We needed it initially get things going. 
     typedef enum logic [2:0] {
         ST_CMD_CAPTURE   = 3'd1,   // Shifting in 8-bit op-code (this is default idle state)
-        ST_SHIFT_TX1     = 3'd2,   // Shifting out what ever is in shift_out on dat1 forever
-        ST_SHIFT_TX4     = 3'd3,   // Shifting out what ever is in shift_out on dat[0:3] forever                        
-        ST_READ_4X_DUMMY = 3'd5,   // Discard how ever many clocks are in bit_count then go to ST_SHIFT_TX4 (used for consuming address bits on read)
+        ST_SHIFT_TX1     = 3'd2,   // Shifting out what ever is in shift_out_x4 on dat1 forever
+        ST_SHIFT_TX4     = 3'd3,   // Shifting out what ever is in shift_out_x4 on dat[0:3] forever                        
+        ST_READ_4X_DUMMY = 3'd5,   // Discard how ever many clocks are in bit_count then go to ST_SHIFT_TX4 (used for consuming address & dummy bits on read)
         ST_DEAD          = 3'd7    // Do nothing, wait for a CS reset 
     } state_t;
 
     state_t state = ST_CMD_CAPTURE;
+    
+    
+    
+    // Easy to eyeball test data
+    localparam [ 127 :0] DATA_PATTERN    = 128'h01234567_89ABCDEF_FFFFFFFF_00000000;
+
                    
-    // Whatever is in here goes out the door when in ST_SHIFT_OUT
-    // Note we do not bother to keep a bit counter because if the master asks for more bits
-    /// than we have, we mind as well send 0's, right?
-    // sinlge bit SPI
-    
-    // Be ready for 32 words, 32 bits each per packet. Could be bigger if we want a header? 
-    logic [ 1023 :0] shift_out ; //= 64'h11223344_55667788;
-    
-    
-    
+    // Whatever is in here goes out the door when in ST_shift_out_x4
+           
+    logic [ 63 :0] shift_out_x4 = DATA_PATTERN[ 127 : 64] ; 
     
     // A define becuase I don't think a task or function can take
     // I know this is ugly, but I don't know a better way to pass a (compile-time) variable len packed array. Do you? 
     
-    //`define STUFF_INTO_SHIFT_OUT(x) shift_out_x1[ $high(shift_out_x1) -: $bits(x) ] <= x; bit_count <= $bits(x); io1_oe_pos <= 1'b1 
         
     // Incoming command byte
     logic [7:0] shift_in_x1;
     
-    
+    // Need to send 4 bytes in single MISO to answer 9F device ID
+    logic [4*8:0] shift_out_x1;     
+        
     // a bit_counter, means didfferent things in different states
     // In ST_CMD_CAPTURE: This is number of command bits in shift_in_x1 so far (<8)  
     // In ST_READ_Xx_DUMMY: This is the number of dummy bits to read before switching to READ state 
     logic [7:0] bit_count = 0;         // How many bits in shift so far?
         
     // Written to by posedge clk, read by negedge clk
-    // we need this becuase the master reads MISO on the posedge
-    // TODO: This could be smaller (and could overflow). What is the right way to allocate this size?    
+    // we need this becuase the master reads on the posedge
     logic [3:0] next_quad_out;
     
     // Are we currently transmitting?
@@ -241,14 +144,14 @@ endfunction
     always_ff @(negedge qspi_clk) begin
             
         if ( tx_flag ) begin
-                
+        
             output_enable_neg <= 1'b1;
 
             io0_out <= next_quad_out[0];
             io1_out <= next_quad_out[1];
             io2_out <= next_quad_out[2];
             io3_out <= next_quad_out[3];
-                                      
+                                                               
         end else begin
         
             output_enable_neg <= 1'b0;
@@ -262,7 +165,8 @@ endfunction
         
     logic posedge_cs_detected = 1'b1; 
     
-    u32_t seq = 0;
+    // Give each packet a 4-bit serial number at the begining. 
+    logic [3:0] seq = 0;
     
     // Main logic            
     always_ff @(posedge qspi_clk or posedge qspi_cs) begin
@@ -319,7 +223,7 @@ endfunction
                                     next_quad_out[1] <= JEDEC_ID[ $high(JEDEC_ID) ];
                         
                                     // stuff the rest of the bits into the shift register
-                                    shift_out[ $high(shift_out) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) -1 : 0]  };
+                                    shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) -1 : 0]  };
                                     
                                     // switch to sending mode. We will send this bit and enable the outputs on next negedge clk
                                     state <= ST_SHIFT_TX1;
@@ -334,56 +238,7 @@ endfunction
                                     // This command is the master asking us for some data on quad IO lines, but first we need to get rid of the 24 address bits + 8 dummy bits
                                     bit_count <= (3*8) + (8) ;    // 3 address bytes + 8 dummy cycles. TODO: We can get rid of the dummies by implementing the capabilities table.                                                               
                                     state <= ST_READ_4X_DUMMY;
-                                    
-                                    // Also since we are here, lets load up the shift register with the packet to go out.
-                                    // this way it will be ready when we switch to tx mode
-                                    // This should also give us a compile time error if the shift_out is not wide enough for a single packet
-                                    
-                                    
-                                    // Yikes, the line below gets an error! Why?!?!? 
-                                    // [Synth 8-524] part-select [1023:-1024] out of range of prefix 'shift_out'
-                                    //shift_out[ $high( shift_out) :- $bits( packet_t ) ]  <= build_packet( seq );
-                                    
-                                    //shift_out[ $high( shift_out) :  $high( shift_out) - $high( packet_t ) ]  <= build_packet( seq );
-                                    //shift_out <=   build_packet( seq );
-                                    
-                                    // shift_out[$high(shift_out) -: $bits(packet_t)] <= build_packet(seq);                                    
-                                    
-                                    shift_out[ (1023 -  0*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 -  1*32 ) -: 32 ] <= 32'hffffffff ;
-                                    shift_out[ (1023 -  2*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 -  3*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 -  4*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 -  5*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 -  6*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 -  7*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 -  8*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 -  9*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 10*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 11*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 12*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 13*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 14*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 15*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 16*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 17*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 18*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 19*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 20*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 21*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 22*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 23*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 24*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 25*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 26*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 27*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 28*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 29*32 ) -: 32 ] <= 32'h11111111 ;
-                                    shift_out[ (1023 - 30*32 ) -: 32 ] <= 32'hffffffff ;
-                                    shift_out[ (1023 - 31*32 ) -: 32 ] <= 32'h11111111 ;
-                                                                                                            
-                                    seq <= seq + 1;  
-                                                                            
+                                                                                                                
                                 end
                                                             
                                 
@@ -416,28 +271,25 @@ endfunction
                     
                         // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
                         // no count, will keep sending over and over again forever.
-                        next_quad_out[1] <=   shift_out[ $high(shift_out) ];
-                        shift_out <= shift_out << 1;
+                        next_quad_out[1] <=   shift_out_x1[ $high(shift_out_x1) ];
+                        shift_out_x1 <= shift_out_x1 << 1;
                         
                         
                     end
                                         
                     
                     ST_READ_4X_DUMMY: begin
-                    
-                        // This is the same as ST_READ_1X_DUMMY, except that when the count is done it will load 4 bits into io_ou[0:3] and then jump to state ST_SHIFT_TX4
-                    
+                                        
                         if (bit_count == 1 ) begin
                         
+                            // We (almost) finished reading the dummy bits (we also consider address bits to be dummy since we don't care)                        
                             // we test for 1 rather than 0 becuase we are on the rising edge of the clk, so cnt not updated yet
                         
-                            // We are done reading the address bits, so start sending the data!
-                                                    
-                            // TODO: THIS SHOULD BE MACRO
-                            
-                            // Preload the first 4 bits so we are ready for the first falling edge. 
-                            next_quad_out <= shift_out[ $high(shift_out) -: 4  ];
-                            shift_out <= shift_out << 4;                                 
+                            // Start sending the data!                                                                               
+
+                            // First Nibble will be a 4-bit sequence number so host can detect any missed packets.  
+                            next_quad_out <= seq[3:0];
+                            seq <= seq+1;                                  
                                                 
                             // switch to sending mode. the posedge clk will see this state and enable output and send the nibbles
                             state <= ST_SHIFT_TX4;
@@ -455,14 +307,10 @@ endfunction
                     
                     ST_SHIFT_TX4: begin
                     
-                        // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
-                        // no count, will keep sending over and over again forever.
-//                      next_quad_out <=  shift_out[ $high(shift_out) -: 4 ];
-                        
-                        next_quad_out <=  shift_out[ $high(shift_out) -: 4  ];
-                        
-                        shift_out <= { shift_out[ $high(shift_out) - 4 : 0 ] , 4'b0000 };                                                
-                        
+                        // no count, will keep rotating shift and sending over and over again forever.
+                        next_quad_out <= shift_out_x4[ $high(shift_out_x4) -: 4  ];
+                        shift_out_x4 <= { shift_out_x4[ $high(shift_out_x4)-4 : 0 ] , shift_out_x4[ $high(shift_out_x4) -: 4  ] };                                  
+                    
                     end  // ST_SHIFT_TX4: 
                             
                 endcase //  case (state)
