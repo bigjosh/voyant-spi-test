@@ -30,8 +30,8 @@ run 200ns                 ;# let the DUT settle
 ########################################################################
 # Parameters
 ########################################################################
-set Tclk   1000ns          ;# 1 MHz period
-set Thalf  500ns
+set Tclk   100ns          ;# 1 MHz period
+set Thalf  50ns
 set CMD    0x6B
 set DUMMY  260             ;# number of EXTRA full clocks
 

@@ -23,6 +23,13 @@ set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_cs}]
 set_property PACKAGE_PIN    K17         [get_ports {qspi_clk}]    
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_clk}]
 
+# Tell Vivado the frequency (period = 40 ns for 25 MHz)
+create_clock \
+    -name ext_clk_in                 \
+    -period 40.000                   \
+    -waveform {0 20}                 \
+    [get_ports qspi_clk]
+
 
 # DATA PINS
 
