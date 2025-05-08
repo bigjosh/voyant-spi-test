@@ -13,23 +13,23 @@
 
 module top (
     // Quad-SPI pins 
-    input  logic        qspi_clk,     // Serial clock from master (mode-agnostic)
-    input  logic        qspi_cs,      // Chip-select, *active-LOW*
-    inout  logic        qspi_dat0,    // IO0  - MOSI in 1-bit mode, bit-0 in x4
-    inout  logic        qspi_dat1,    // IO1  - MISO in 1-bit mode, bit-1 in x4
-    inout  logic        qspi_dat2,    // IO2  -             (unused in 1-bit)
-    inout  logic        qspi_dat3,    // IO3  -             (unused in 1-bit)
+    input  wire        qspi_clk,     // Serial clock from master (mode-agnostic)
+    input  wire        qspi_cs,      // Chip-select, *active-LOW*
+    inout  wire        qspi_dat0,    // IO0  - MOSI in 1-bit mode, bit-0 in x4
+    output wire        qspi_dat1,    // IO1  - MISO in 1-bit mode, bit-1 in x4
+    output wire        qspi_dat2,    // IO2  -             (unused in 1-bit)
+    output wire        qspi_dat3,    // IO3  -             (unused in 1-bit)
 
     // Extras to make work easier
-    output logic        gnd,          // Hard-wired ZERO - makes PCB nets happy
-    output logic        led,          // Heart-beat LED (blinks on any read)
-    output logic        debugA,       // On logic analyzer
-    output logic        debugB        // On logic analyzer
+    output wire        gnd,          // Hard-wired ZERO - makes PCB nets happy
+    output wire        led,          // Heart-beat LED (blinks on any read)
+    output wire        debugA,       // On logic analyzer
+    output wire        debugB        // On logic analyzer
     
 );
 
-   
-   typedef logic [ 31:0 ] u32_t; 
+         
+    typedef logic [ 31:0 ] u32_t;
    
     parameter int BITS_PER_WORD        = 32;
     parameter int WORDS_PER_PACKET     = 32;
@@ -68,25 +68,9 @@ module top (
     
     // Are we driving pins? Both of these need to be enabled for pins to be output.
     // This dance lets us send on the negedge of clk 
-    logic output_enable_pos;
     logic output_enable_neg;
     
-    // IO pins are assigned to tristate except for when CS is active and we are transmitting
-    // if either one of those is not true, then pin is Hi-Z
 
-    // in x1 mode, this is MOSI
-    logic io0_out;
-    assign qspi_dat0 = (output_enable_pos && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io0_out : 1'bz;
-    
-    // in x1 mode this is MISO (an output)
-    logic io1_out;
-    assign qspi_dat1 = (output_enable_pos && output_enable_neg && !qspi_cs ) ? io1_out : 1'bz;
-
-    logic io2_out;
-    assign qspi_dat2 = (output_enable_pos && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io2_out : 1'bz;
-
-    logic io3_out;
-    assign qspi_dat3 = (output_enable_pos && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io3_out : 1'bz;
 
     // TODO: Take out 1bit read stuff? We needed it initially get things going. 
     typedef enum logic [2:0] {
@@ -103,21 +87,20 @@ module top (
     
     // Easy to eyeball test data
     localparam [ 127 :0] DATA_PATTERN    = 128'h01234567_89ABCDEF_FFFFFFFF_00000000;
-
                    
     // Whatever is in here goes out the door when in ST_shift_out_x4
            
-    logic [ 63 :0] shift_out_x4 = DATA_PATTERN[ 127 : 64] ; 
+    logic [ 63 :0] shift_out_x4 =  64'h01234567_89ABCDEF;  //DATA_PATTERN[ 127 : 64] ; 
     
     // A define becuase I don't think a task or function can take
     // I know this is ugly, but I don't know a better way to pass a (compile-time) variable len packed array. Do you? 
     
         
     // Incoming command byte
-    logic [7:0] shift_in_x1;
+    logic [7:0] shift_in_x1 ;
     
     // Need to send 4 bytes in single MISO to answer 9F device ID
-    logic [4*8:0] shift_out_x1;     
+    logic [$high(JEDEC_ID):0] shift_out_x1;     
         
     // a bit_counter, means didfferent things in different states
     // In ST_CMD_CAPTURE: This is number of command bits in shift_in_x1 so far (<8)  
@@ -126,7 +109,7 @@ module top (
         
     // Written to by posedge clk, read by negedge clk
     // we need this becuase the master reads on the posedge
-    logic [3:0] next_quad_out;
+    //logic [3:0] next_quad_out;
     
     // Are we currently transmitting?
     // This just makes it so we don't need to keep track of which states are transmit states here. Better to know that 
@@ -138,6 +121,32 @@ module top (
     assign debugA = (state == ST_READ_4X_DUMMY ) ? 1'b1 : 1'b0;
     assign debugB = (state == ST_SHIFT_TX4 ) ? 1'b1 : 1'b0;
     
+    
+    // Assign the data outputs to the top of the apropriate shift reg based on if we are in quad or single bit mode
+    assign  io3_val = shift_out_x4[ $high( shift_out_x4 ) - 0 ];
+    assign  io2_val = shift_out_x4[ $high( shift_out_x4 ) - 1 ];
+    assign  io1_val = ( quad_tx_mode ) ? shift_out_x4[ $high( shift_out_x4 ) - 2 ] : shift_out_x1[ $high( shift_out_x1) ];   // This pin is also MISO when in single bit mode  
+    assign  io0_val = shift_out_x4[ $high( shift_out_x4 ) - 3 ];
+    
+    logic io3_out;
+    logic io2_out;
+    logic io1_out;  
+    logic io0_out;
+
+    
+    // IO pins are assigned to tristate except for when CS is active and we are transmitting
+    // if either one of those is not true, then pin is Hi-Z
+
+    // in x1 mode, this is MOSI
+    assign qspi_dat0 = (tx_flag && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io0_out : 1'bz;
+    
+    // in x1 mode this is MISO (an output)
+    assign qspi_dat1 = (tx_flag && output_enable_neg && !qspi_cs ) ? io1_out : 1'bz;
+
+    assign qspi_dat2 = (tx_flag && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io2_out : 1'bz;
+
+    assign qspi_dat3 = (tx_flag && output_enable_neg && !qspi_cs && quad_tx_mode ) ? io3_out : 1'bz;    
+        
     // When sending, we need to update our outputs on the negedge CLK so they will be ready for the master to sample on the posedge   
     // Note this depends on there being a negedge clk between transmit bursts, but luckily in SPI protocol there will always be a command
     // first followed by the transmit so OK.    
@@ -145,12 +154,13 @@ module top (
             
         if ( tx_flag ) begin
         
+            // grab the current bit values from the shift reg and put them out on the pins
+            io0_out <= io0_val;
+            io1_out <= io1_val;
+            io2_out <= io2_val;
+            io3_out <= io3_val;
+        
             output_enable_neg <= 1'b1;
-
-            io0_out <= next_quad_out[0];
-            io1_out <= next_quad_out[1];
-            io2_out <= next_quad_out[2];
-            io3_out <= next_quad_out[3];
                                                                
         end else begin
         
@@ -189,7 +199,6 @@ module top (
                     
                 // imedeately tri-state the oouts so other people can use the bus
                 // better to put a `& ~qspi_cs` into the assign? 
-                output_enable_pos <= 1'b0;
                 
                 tx_flag <= 1'b0;
                 quad_tx_mode <= 1'b0; 
@@ -218,19 +227,14 @@ module top (
                                 OPCODE_READ_ID:  begin
                                 
                                     // This command is the master asking us for our ID, so we send it.                              
-                                    
-                                    // Preload the first bit. Dont care about the other dat pins we are in 1x mode now. ([1]=MISO) 
-                                    next_quad_out[1] <= JEDEC_ID[ $high(JEDEC_ID) ];
-                        
-                                    // stuff the rest of the bits into the shift register
-                                    shift_out_x1[ $high(shift_out_x1) -: ($bits(JEDEC_ID)-1) ] <= { JEDEC_ID[ $high( JEDEC_ID ) -1 : 0]  };
+                                                            
+                                    // The top bit of the shift reg will appear on MISO on the next negedge spi_clk
+                                    shift_out_x1 <= JEDEC_ID;
                                     
                                     // switch to sending mode. We will send this bit and enable the outputs on next negedge clk
                                     state <= ST_SHIFT_TX1;
-                                    tx_flag <= 1'b1;                    
-                                    
-                                    output_enable_pos <= 1'b1;
-                                                                            
+                                    tx_flag <= 1'b1;
+                                                                                                                
                                 end
                                                                 
                                 OPCODE_QOFR:  begin
@@ -247,7 +251,6 @@ module top (
                                 
                                   state <= ST_DEAD; // Unsupported op, go dead wait for next CS reset
                                   tx_flag <= 1'b0;
-                                  output_enable_pos <= 1'b0;
                                   
                                 end
                                                              
@@ -270,8 +273,7 @@ module top (
                     ST_SHIFT_TX1: begin
                     
                         // always send next bit. note the bit will actually be put out the pin on the posedge clk by an always block above.
-                        // no count, will keep sending over and over again forever.
-                        next_quad_out[1] <=   shift_out_x1[ $high(shift_out_x1) ];
+                        // no count, will keep sending over and over again forever. We depend on the host to only ready how much it needs
                         shift_out_x1 <= shift_out_x1 << 1;
                         
                         
@@ -287,15 +289,19 @@ module top (
                         
                             // Start sending the data!                                                                               
 
-                            // First Nibble will be a 4-bit sequence number so host can detect any missed packets.  
-                            next_quad_out <= seq[3:0];
-                            seq <= seq+1;                                  
+                            // First Nibble will be a 4-bit sequence number so host can detect any missed packets.
+                            
+                            //warning debug code
+                            // Note for now we are preloading the x4 shift register and rotating though. 
+                            //shift_out_x4[ $top(shift_out_x4) -: $bits(DATA_PATTERN) ] <= DATA_PATTERN;                                  
+                                    
+//                            next_quad_out <= seq[3:0];
+//                            seq <= seq+1;                                  
                                                 
                             // switch to sending mode. the posedge clk will see this state and enable output and send the nibbles
                             state <= ST_SHIFT_TX4;
-                            output_enable_pos <= 1'b1;
                             tx_flag <= 1'b1;
-                            quad_tx_mode <= 1'b1; 
+                            quad_tx_mode <= 1'b1;
                                                                             
                         end else begin
                         
@@ -308,8 +314,7 @@ module top (
                     ST_SHIFT_TX4: begin
                     
                         // no count, will keep rotating shift and sending over and over again forever.
-                        next_quad_out <= shift_out_x4[ $high(shift_out_x4) -: 4  ];
-                        shift_out_x4 <= { shift_out_x4[ $high(shift_out_x4)-4 : 0 ] , shift_out_x4[ $high(shift_out_x4) -: 4  ] };                                  
+                        shift_out_x4 <= { shift_out_x4[ $high(shift_out_x4)-4 : 0 ] , shift_out_x4[ $high(shift_out_x4) -: 4  ] };                         
                     
                     end  // ST_SHIFT_TX4: 
                             

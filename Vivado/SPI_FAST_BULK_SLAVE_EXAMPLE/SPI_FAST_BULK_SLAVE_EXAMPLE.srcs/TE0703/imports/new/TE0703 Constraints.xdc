@@ -1,17 +1,6 @@
 #### These values are for the TE0703 carrier board
 #### Tried to match the Voyant PCB when possible, but when not possible picked easy to access pins.
 
-## CS
-
-# On the SOM this is called signal QSPI_SSN 
-# On Dhalia this comes out on X19-5
-# It goes into the TE0712 module on B_15_L22_P which maps to pin  L15
-# On TE0703 carrier board at header  J2-B6
-
-# J2-B6
-set_property PACKAGE_PIN    L15         [get_ports {qspi_cs}]  
-set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_cs}]
-
 
 ## CLK
 
@@ -23,13 +12,23 @@ set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_cs}]
 set_property PACKAGE_PIN    K17         [get_ports {qspi_clk}]    
 set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_clk}]
 
-# Tell Vivado the frequency (period = 40 ns for 25 MHz)
+# Tell Vivado the frequency (period = 50 ns for 20 MHz)
 create_clock \
-    -name ext_clk_in                 \
+    -name clk                        \
     -period 40.000                   \
     -waveform {0 20}                 \
     [get_ports qspi_clk]
 
+## CS
+
+# On the SOM this is called signal QSPI_SSN 
+# On Dhalia this comes out on X19-5
+# It goes into the TE0712 module on B_15_L22_P which maps to pin  L15
+# On TE0703 carrier board at header  J2-B6
+
+# J2-B6
+set_property PACKAGE_PIN    L15         [get_ports {qspi_cs}]  
+set_property IOSTANDARD     LVCMOS18    [get_ports {qspi_cs}]
 
 # DATA PINS
 
@@ -62,7 +61,7 @@ set_property IOSTANDARD  LVCMOS18   [get_ports    debugB]
 
 # 1. Tell synthesis not to add a BUFG becuase this clock is completely external
 #    and we only need it here for ourselves.  
-set_property CLOCK_BUFFER_TYPE NONE [get_ports {qspi_clk}]
+# set_property CLOCK_BUFFER_TYPE NONE [get_ports {qspi_clk}]
 
 # GND #
 
