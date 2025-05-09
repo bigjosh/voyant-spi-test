@@ -28,12 +28,40 @@ module simplest (
     
 );
 
-    assign debugA = qspi_cs;
-    assign debugV = qspi_clk;
+   localparam int SR_WIDTH = 1024;
+                   
+    // For now, first the enable bits, then the data bits in one shoft reg
+    // 40 = 8 command, 24 address, 8 dummy
+           
+    logic [ $clog2(SR_WIDTH) :0] count =0; 
     
+    localparam DATA_PATTERN  = {
+        40'b0,                                      // These are dummy bits that will get dumped as we consume the command, address, and dummy clock cycles. 
+        'hff00ff00_cafebabe_01234567_deadbeef,
+        'hff00ff00_cafebabe_01234567_deadbeef,
+        'hff00ff00_cafebabe_01234567_deadbeef,
+        'hff00ff00_cafebabe_01234567_deadbeef               
+    };
 
+    logic [0:$high(DATA_PATTERN)] sr = DATA_PATTERN;  
+                  
+    assign qspi_dat1 = (!qspi_cs) && (count >= 40 ) ? sr[count] : 1'bz;
+    
+    assign debugA = (count >= 40 );
+    assign debugB = sr[count];
+    
+    assign active_cs_and_clk_high = (!qspi_cs) && qspi_clk;
+    
+    assign inactive_cs_and_clk_low = (!qspi_cs) && (!qspi_clk); 
+                         
+    always @( negedge active_cs_and_clk_high or posedge qspi_cs )  begin
+    
+        count <= qspi_cs ? 0 : count +1;
+                                 
+    end
+            
     // LED on when we are active
-    assign led = 1'b0;
+    assign led = 1'b1;
     
     // gnd pin is always tied low for convienice
     assign gnd = 1'b0;
