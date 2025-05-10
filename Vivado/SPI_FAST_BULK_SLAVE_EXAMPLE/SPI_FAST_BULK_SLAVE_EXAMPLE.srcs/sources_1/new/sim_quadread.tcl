@@ -2,7 +2,7 @@
 # spi_master_abs.tcl – Read two packets with 0x6B , 1 MHz, MODE-0
 ########################################################################
 # Adjust this if your DUT is not /tb/uut
-set PATH "/top"
+set PATH "/simplest"
 
 # To run:
 # source "D:/Github/voyant-40mhz-spi/Vivado/SPI_FAST_BULK_SLAVE_EXAMPLE/SPI_FAST_BULK_SLAVE_EXAMPLE.srcs/sources_1/new/sim_quadread.tcl"
@@ -34,6 +34,46 @@ set Tclk   100ns          ;# 1 MHz period
 set Thalf  50ns
 set CMD    0x6B
 set DUMMY  260             ;# number of EXTRA full clocks
+
+
+# first do 0x9f read device id
+
+set CMD_DEVID    0x9F
+
+
+#######################################################################
+# Begin transaction: pull CS low
+########################################################################
+add_force [sig qspi_cs] 0 -radix bin
+run $Thalf                     ;# tSU(CS→CLK) – half a period
+
+########################################################################
+# Shift out CMD_DEVID, MSB first.  Data is stable before the rising edge.
+########################################################################
+for {set i 7} {$i >= 0} {incr i -1} {
+    set bitval [expr {($CMD_DEVID >> $i) & 1}]
+    add_force [sig qspi_dat0] $bitval -radix bin
+    spi_tick $Thalf
+}
+
+########################################################################
+# Issue 6*8 = 48 *extra* clock cycles for the read ID phase
+########################################################################
+for {set i 0} {$i < 48} {incr i} {
+    spi_tick $Thalf
+}
+
+#######################################################################
+# END transaction: CS high 
+########################################################################
+add_force [sig qspi_cs] 1 -radix bin
+run $Thalf                     ;# tSU(CS→CLK) – half a period
+
+run $Tclk
+run $Tclk
+run $Tclk
+
+return
 
 ########################################################################
 # Begin transaction: pull CS low
